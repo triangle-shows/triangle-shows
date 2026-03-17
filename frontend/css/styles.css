@@ -467,6 +467,25 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
 }
 .kofi-btn:hover { background: var(--accent-hover); color: var(--bg); text-decoration: none; }
 
+.btn-propose {
+  display: inline-block;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.3rem 0.7rem;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  text-decoration: none;
+  transition: border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.btn-propose:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+
+.propose-sidebar { display: none; }
+
 /* === Calendar === */
 .calendar-container {
   padding: 1.1rem 1.25rem;
@@ -966,8 +985,10 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   /* Reduce ev right padding on mobile */
   .ev { padding-right: 20px; }
 
-  /* Ko-fi: hide from header, show at bottom of sidebar */
+  /* Ko-fi + propose: hide from header, show at bottom of sidebar */
   .app-header .kofi-wrap { display: none; }
+  .app-header .btn-propose { display: none; }
+  .propose-sidebar { display: block; margin-bottom: 0.5rem; }
   .kofi-sidebar {
     display: flex;
     flex-direction: column;
