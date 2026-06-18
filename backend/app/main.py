@@ -110,14 +110,19 @@ async def trigger_scrape(scraper_type: str = None):
     """Manually trigger a scrape (development use)."""
     from app.database import async_session
     from app.scrapers.manager import ScrapeManager
+    from fastapi import HTTPException
 
-    async with async_session() as session:
-        manager = ScrapeManager(session)
-        if scraper_type:
-            results = await manager.scrape_all(scraper_types=[scraper_type])
-        else:
-            results = await manager.scrape_all()
-        return {"results": results}
+    try:
+        async with async_session() as session:
+            manager = ScrapeManager(session)
+            if scraper_type:
+                results = await manager.scrape_all(scraper_types=[scraper_type])
+            else:
+                results = await manager.scrape_all()
+            return {"results": results}
+    except Exception as e:
+        logger.error(f"[trigger_scrape] Unhandled error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Serve frontend static files

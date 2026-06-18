@@ -76,6 +76,24 @@ const PALETTES = {
       "--today-bg":     "rgba(192,96,208,0.05)",
     },
   },
+  // Durham Bulls: #003E7A navy + #B15E27 burnt orange
+  durham: {
+    label: "Durham",
+    accent: "#bf6a28",
+    vars: {
+      "--bg":           "#030d22",
+      "--surface":      "#081a30",
+      "--surface2":     "#0e2340",
+      "--border":       "#1c3a6a",
+      "--text":         "#d8e4f4",
+      "--muted":        "#4878b8",
+      "--dim":          "#1c3868",
+      "--accent":       "#bf6a28",
+      "--accent-hover": "#f0a050",
+      "--accent-bg":    "rgba(191,106,40,0.14)",
+      "--today-bg":     "rgba(191,106,40,0.06)",
+    },
+  },
 };
 
 function applyPalette(key) {
@@ -124,6 +142,52 @@ function fitAsciiTitle() {
 
 document.addEventListener("DOMContentLoaded", fitAsciiTitle);
 window.addEventListener("resize", fitAsciiTitle);
+
+// Per-subdomain site configuration. Detected once at load time from hostname.
+const SITE_CONFIG = (function () {
+  const host = window.location.hostname;
+  if (host.startsWith("durm.")) {
+    return {
+      city:      "Durham",
+      title:     "durm-shows",
+      subtitle:  `live music <s>across the triangle</s> in durham on one calendar. see the rest of the triangle <a href="https://triangle-shows.net" style="color: var(--accent-hover)">here</a>.`,
+      palette:   "durham",
+      ascii: `      __                               __                                    __ \n  ___/ /_  ___________ ___       _____/ /_  ____ _      _______  ____  ___  / /_\n / _  / / / / ___/ __ '__ \\_____/ ___/ __ \\/ __ \\ | /| / / ___/ / __ \\/ _ \\/ __/\n/ // / /_/ / /  / / / / / /_____\\__ / / / / /_/ / |/ |/ /\\__ / / / / /  __/ /_  \n\\___/\\____/_/  /_/ /_/ /_/    /____/_/ /_/\\____/|__/|__/____(_)_/ /_/\\___/\\__/ `,
+    };
+  }
+  return { city: null };
+})();
+
+// Apply subdomain-specific title, subtitle, and default palette.
+// Runs after DOM is ready; palette is only defaulted if the user has no saved preference.
+function applySiteConfig() {
+  if (!SITE_CONFIG.city) return;
+
+  document.title = SITE_CONFIG.title + ".net";
+
+  const asciiTitle = document.querySelector(".ascii-title");
+  const siteTitle  = document.querySelector(".site-title");
+  const subtitle   = document.querySelector(".site-subtitle");
+
+  // Swap ASCII art text while preserving the cursor span
+  if (asciiTitle && SITE_CONFIG.ascii) {
+    const cursor = asciiTitle.querySelector(".cursor");
+    asciiTitle.textContent = SITE_CONFIG.ascii;
+    if (cursor) asciiTitle.appendChild(cursor);
+  }
+  if (siteTitle) siteTitle.textContent = SITE_CONFIG.title;
+  if (subtitle)  subtitle.innerHTML = SITE_CONFIG.subtitle;
+
+  // Hide palette swatches — durham palette is fixed; only dark/light toggle remains
+  const paletteGroup = document.querySelector(".palette-group");
+  if (paletteGroup) paletteGroup.style.display = "none";
+
+  // Always apply the site palette — picker is hidden on subdomain sites so
+  // there's no UI to change it, and the saved preference may be from the main domain.
+  applyPalette(SITE_CONFIG.palette);
+}
+
+document.addEventListener("DOMContentLoaded", applySiteConfig);
 
 // City color mappings — jewel-tone palette, matches venue color families
 // border = chip border/text color; activeBg = subtle tint for active state

@@ -51,6 +51,7 @@ steps:
     id: build
     args:
       - build
+      - --build-arg=GIT_COMMIT=$COMMIT_SHA
       - -t
       - $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/api:$COMMIT_SHA
       - -t
@@ -78,7 +79,7 @@ steps:
       - --port=8000
       - --memory=512Mi
       - --cpu=1
-      - --min-instances=1
+      - --min-instances=0
       - --max-instances=2
       - --timeout=300
       - --set-env-vars=APP_ENV=production,ENABLE_SCHEDULER=false,LOG_LEVEL=INFO

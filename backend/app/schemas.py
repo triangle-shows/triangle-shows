@@ -69,3 +69,4 @@ class HealthResponse(BaseModel):
     event_count: int
     venue_count: int
     last_scrape: Optional[datetime] = None
+    version: Optional[str] = None

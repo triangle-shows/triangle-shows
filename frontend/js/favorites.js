@@ -59,6 +59,28 @@ function restoreHidden() {
   }
 }
 
+function unhideForDate(date) {
+  const hidden = getHidden();
+  let changed = false;
+  // Use _allEventsCache because hidden events are excluded from FC's event store.
+  const source = (typeof _allEventsCache !== "undefined" && _allEventsCache.length)
+    ? _allEventsCache
+    : (typeof calendar !== "undefined" && calendar ? calendar.getEvents() : []);
+  source.forEach((ev) => {
+    const evDate = ev.extendedProps?.date;
+    if (evDate === date && hidden[ev.id]) {
+      delete hidden[ev.id];
+      changed = true;
+    }
+  });
+  if (changed) {
+    localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden));
+    updateBottomBar();
+    if (typeof _updateHiddenChip === "function") _updateHiddenChip(date);
+    if (typeof applyAllFilters === "function") requestAnimationFrame(applyAllFilters);
+  }
+}
+
 // ── Bottom bar (favorites download + restore hidden) ────────────────────────
 
 function updateBottomBar() {

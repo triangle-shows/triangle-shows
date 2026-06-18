@@ -64,6 +64,21 @@ html[data-palette="wisteria"] {
   --today-bg:     rgba(192,96,208,0.05);
 }
 
+/* Durham Bulls: #003E7A navy bg, #B15E27 orange accent */
+html[data-palette="durham"] {
+  --bg:           #030d22;
+  --surface:      #081a30;
+  --surface2:     #0e2340;
+  --border:       #1c3a6a;
+  --text:         #d8e4f4;
+  --muted:        #4878b8;
+  --dim:          #1c3868;
+  --accent:       #bf6a28;
+  --accent-hover: #f0a050;
+  --accent-bg:    rgba(191,106,40,0.14);
+  --today-bg:     rgba(191,106,40,0.06);
+}
+
 /* === Light mode palette overrides ===
    data-mode="light" triggers warm-paper versions of each accent family.
    Compound selectors [data-mode="light"][data-palette="..."] have higher
@@ -123,6 +138,21 @@ html[data-mode="light"][data-palette="wisteria"] {
   --accent-hover: #6a1888;
   --accent-bg:    rgba(136,40,168,0.10);
   --today-bg:     rgba(136,40,168,0.06);
+}
+
+/* Durham Bulls light: warm desaturated brown bg, navy text */
+html[data-mode="light"][data-palette="durham"] {
+  --bg:           #f5ece0;
+  --surface:      #eee0d0;
+  --surface2:     #e4d0bc;
+  --border:       #cdb898;
+  --text:         #002858;
+  --muted:        #2a4e82;
+  --dim:          #b89e80;
+  --accent:       #003E7A;
+  --accent-hover: #0060c0;
+  --accent-bg:    rgba(0,62,122,0.10);
+  --today-bg:     rgba(0,62,122,0.06);
 }
 
 /* === Base === */
@@ -204,11 +234,11 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   position: fixed;
   inset: 0;
   z-index: 2000;
-  background: var(--bg);
+  background: color-mix(in srgb, var(--bg) 50%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: opacity 0.4s ease;
+  transition: opacity 1s ease;
 }
 #loading-screen.fade-out {
   opacity: 0;
@@ -216,6 +246,11 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
 }
 @media (prefers-reduced-motion: reduce) {
   #loading-screen { transition: none; }
+}
+.ls-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
 }
 .ls-line {
   display: flex;
@@ -229,7 +264,7 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   margin-right: 0.5em;
 }
 .ls-text {
-  color: var(--text);
+  color: var(--accent);
 }
 .ls-cursor {
   display: inline-block;
@@ -240,6 +275,52 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   margin-left: 2px;
   animation: blink 1.1s step-end infinite;
 }
+.ls-bar-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+.ls-bar-bracket { color: var(--dim); }
+.ls-bar-track   { color: var(--dim); letter-spacing: -0.02em; }
+.ls-bar-filled  { color: var(--accent); }
+.ls-bar-pct     { color: var(--dim); font-size: 0.68rem; min-width: 2.8em; }
+
+/* ── Per-day hidden-shows chip (month) & row (list) ─────────────────────── */
+.day-hidden-chip {
+  display: inline-block;
+  font-size: 0.6rem;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 1px 4px;
+  margin-top: 2px;
+  border-radius: 1px;
+  border: 1px solid var(--border);
+  transition: color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+  user-select: none;
+  line-height: 1.6;
+}
+.day-hidden-chip:hover { color: var(--accent); border-color: var(--accent); }
+
+.fc-list-hidden-row .fc-list-hidden-cell { padding: 0; }
+.list-hidden-btn {
+  display: block;
+  width: 100%;
+  padding: 0.28rem 0.75rem;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.6rem;
+  color: var(--dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: color 0.12s, background 0.12s;
+  user-select: none;
+}
+.list-hidden-btn:hover { color: var(--accent); background: var(--accent-bg); }
 
 .header-right {
   position: absolute;
@@ -401,6 +482,38 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
 }
 .venue-checkbox::before { content: "> "; color: var(--dim); font-family: 'Space Mono', monospace; }
 .venue-checkbox:hover .venue-label { color: var(--accent); }
+
+.venue-hide-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.6rem;
+  line-height: 1;
+  color: var(--dim);
+  padding: 1px 3px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.12s;
+  user-select: none;
+}
+.venue-checkbox:hover .venue-hide-btn { opacity: 1; }
+.venue-hide-btn:hover { color: var(--accent); }
+
+.venue-restore-btn {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.35rem 0 0 0;
+  text-align: left;
+  opacity: 0.6;
+  transition: color 0.15s, opacity 0.15s;
+  width: 100%;
+}
+.venue-restore-btn:hover { color: var(--accent); opacity: 1; }
 
 .venue-checkbox input { display: none; }
 
@@ -1011,6 +1124,7 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   /* Heart + hide: always slightly visible on mobile (no real hover) */
   .ev-heart { opacity: 0.4; font-size: 0.84rem; }
   .ev-hide  { opacity: 0.3; }
+  .venue-hide-btn { opacity: 0.3; }
 
   /* Bottom bar: left edge on mobile (sidebar is hidden) */
   .favorites-bar { left: 0.75rem; }
@@ -1029,6 +1143,7 @@ html[data-mode="light"] .fc-list-event .ev-title { color: var(--text); }
 html[data-mode="light"] .fc-list-event .ev-venue { color: var(--muted); }
 html[data-mode="light"] .fc-list-event .ev-heart { color: rgba(0,0,0,0.35); }
 html[data-mode="light"] .fc-list-event .ev-hide  { color: rgba(0,0,0,0.25); }
+html[data-mode="light"] .venue-hide-btn          { color: rgba(0,0,0,0.35); }
 
 /* Light mode: daygrid event chips — light bg + accent text so venue colors aren't washed */
 html[data-mode="light"] .fc .fc-daygrid-event {

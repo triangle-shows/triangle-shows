@@ -11,3 +11,6 @@ venv/
 
 # Internal process docs (session context, deployment guides, roadmap)
 _*.md
+.claude/
+.claude*
+CLAUDE.md

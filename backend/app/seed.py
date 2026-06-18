@@ -175,6 +175,78 @@ VENUES = [
         "scraper_config": {"url": "https://shadowboxstudio.org/events/"},
         "color": "#2a4e88",  # denim sapphire (Durham)
     },
+    {
+        "name": "Rubies on Five Points",
+        "slug": "rubies",
+        "city": "Durham",
+        "capacity": 150,
+        "size_category": "small",
+        "website": "https://rubiesnc.com/",
+        "scraper_type": "venuepilot",
+        "scraper_config": {"account_id": 3095},
+        "color": "#7a1e3c",  # deep ruby (Durham)
+    },
+    {
+        "name": "Stanczyks",
+        "slug": "stancyks",
+        "city": "Durham",
+        "capacity": 100,
+        "size_category": "small",
+        "website": "https://www.stanczyksdurham.com/",
+        "scraper_type": "venuepilot",
+        "scraper_config": {"account_id": 3433},
+        "color": "#5a3a20",  # warm espresso (Durham)
+    },
+    {
+        "name": "Boom Club",
+        "slug": "boom-club",
+        "city": "Durham",
+        "capacity": None,
+        "size_category": "small",
+        "website": "https://www.boom-club.org/",
+        "scraper_type": "squarespace",
+        "scraper_config": {
+            "url": "https://www.boom-club.org/events?format=json",
+            "exclude_titles": ["Synth Library open", "Synth Library closed"],
+        },
+        "color": "#3a1e6e",  # deep violet (Durham)
+    },
+    {
+        "name": "Chapel of Bones",
+        "slug": "chapel-of-bones",
+        "city": "Raleigh",
+        "capacity": None,
+        "size_category": "small",
+        "website": "https://chapelofbones.com/",
+        "scraper_type": "tickpick_organizer",
+        "scraper_config": {"organizer_id": "chapel-of-bones"},
+        "color": "#2a2840",  # dark ash (Raleigh)
+    },
+    {
+        "name": "Pour House",
+        "slug": "pour-house",
+        "city": "Raleigh",
+        "capacity": None,
+        "size_category": "small",
+        "website": "https://www.pourhouseraleigh.com/",
+        "scraper_type": "webflow_cms",
+        "scraper_config": {
+            "url": "https://www.pourhouseraleigh.com/calendar",
+            "base_url": "https://www.pourhouseraleigh.com",
+        },
+        "color": "#6a3828",  # warm brick (Raleigh)
+    },
+    {
+        "name": "Slim's",
+        "slug": "slims",
+        "city": "Raleigh",
+        "capacity": 200,
+        "size_category": "small",
+        "website": "https://slimsdivebar.com/",
+        "scraper_type": "mec",
+        "scraper_config": {"url": "https://slimsdivebar.com/music-and-events/"},
+        "color": "#4a3a6a",  # deep plum (Raleigh)
+    },
 ]
 
 

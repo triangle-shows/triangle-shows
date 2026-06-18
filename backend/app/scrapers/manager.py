@@ -60,27 +60,41 @@ class ScrapeManager:
         elif venue.scraper_type == "mec":
             from app.scrapers.mec import MECScraper
             return MECScraper(venue.slug, venue.scraper_config)
+        elif venue.scraper_type == "webflow_cms":
+            from app.scrapers.webflow_cms import WebflowCMSScraper
+            return WebflowCMSScraper(venue.slug, venue.scraper_config)
+        elif venue.scraper_type == "tickpick_organizer":
+            from app.scrapers.tickpick_organizer import TickPickOrganizerScraper
+            return TickPickOrganizerScraper(venue.slug, venue.scraper_config)
         else:
             logger.warning(f"Unknown scraper type: {venue.scraper_type}")
             return None
 
     async def scrape_venue(self, venue: Venue) -> dict:
         """Scrape a single venue and upsert events."""
+        # Refresh venue before accessing any attributes. If a previous scrape_venue call
+        # ended in a rollback, all ORM objects in the session are expired; accessing an
+        # expired attribute on an AsyncSession triggers a sync lazy-load → greenlet error.
+        await self.session.refresh(venue)
+        venue_slug = venue.slug
+        venue_id = venue.id
+        scraper_type = venue.scraper_type
+
         log = ScrapeLog(
-            venue_id=venue.id,
-            scraper_type=venue.scraper_type,
+            venue_id=venue_id,
+            scraper_type=scraper_type,
             started_at=datetime.utcnow(),
         )
-        self.session.add(log)
-        await self.session.flush()
-
         try:
+            self.session.add(log)
+            await self.session.flush()
+
             scraper = self._get_scraper(venue)
             if not scraper:
-                raise ValueError(f"No scraper available for {venue.slug}")
+                raise ValueError(f"No scraper available for {venue_slug}")
 
             scraped_events = await scraper.scrape()
-            created, updated = await self._upsert_events(venue.id, scraped_events)
+            created, updated = await self._upsert_events(venue_id, scraped_events)
 
             log.status = "success"
             log.events_found = len(scraped_events)
@@ -91,11 +105,11 @@ class ScrapeManager:
             await self.session.commit()
 
             logger.info(
-                f"[{venue.slug}] Scrape complete: {len(scraped_events)} found, "
+                f"[{venue_slug}] Scrape complete: {len(scraped_events)} found, "
                 f"{created} created, {updated} updated"
             )
             return {
-                "venue": venue.slug,
+                "venue": venue_slug,
                 "status": "success",
                 "found": len(scraped_events),
                 "created": created,
@@ -103,10 +117,8 @@ class ScrapeManager:
             }
 
         except Exception as e:
-            logger.error(f"[{venue.slug}] Scrape failed: {e}")
+            logger.error(f"[{venue_slug}] Scrape failed: {e}")
             try:
-                # Rollback the failed transaction before attempting any new writes.
-                # Without this, Postgres rejects all further commands on the connection.
                 await self.session.rollback()
                 log.status = "failed"
                 log.error_message = str(e)[:2000]
@@ -115,13 +127,21 @@ class ScrapeManager:
                 self.session.add(log)
                 await self.session.commit()
             except Exception as log_err:
-                logger.warning(f"[{venue.slug}] Could not write error log: {log_err}")
-            return {"venue": venue.slug, "status": "failed", "error": str(e)}
+                logger.warning(f"[{venue_slug}] Could not write error log: {log_err}")
+            return {"venue": venue_slug, "status": "failed", "error": str(e)}
 
     async def _upsert_events(self, venue_id: int, scraped_events: list[ScrapedEvent]) -> tuple[int, int]:
         """Upsert events using hash-based dedup. Returns (created, updated) counts."""
         if not scraped_events:
             return 0, 0
+
+        # Deduplicate scraped events by hash (sites sometimes list the same event
+        # twice — e.g. a featured section + main listing — which would cause a
+        # UniqueViolationError when both end up in the same INSERT flush batch.
+        seen: dict[str, ScrapedEvent] = {}
+        for se in scraped_events:
+            seen.setdefault(se.hash, se)
+        scraped_events = list(seen.values())
 
         # Fetch all matching existing events in one query instead of one per event.
         hashes = [se.hash for se in scraped_events]
@@ -173,7 +193,7 @@ class ScrapeManager:
                     description=se.description,
                     source=se.source,
                     source_url=se.source_url,
-                    hash=event_hash,
+                    hash=se.hash,
                 )
                 self.session.add(event)
                 created += 1

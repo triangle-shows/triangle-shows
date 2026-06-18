@@ -8,11 +8,59 @@ let activeFilters = {
   forYou: false,
 };
 
+// Cache of all events from the API (plain JS objects). Populated once on initial
+// load by the function-based event source in app.js. Used by _getFilteredEvents()
+// so we never call setProp on EventImpl objects during filter passes.
+let _allEventsCache = [];
+
+// ── Hidden venues ─────────────────────────────────────────────────────────────
+const HIDDEN_VENUES_KEY = "triangle-shows-hidden-venues";
+
+function getHiddenVenues() {
+  try { return new Set(JSON.parse(localStorage.getItem(HIDDEN_VENUES_KEY) || "[]")); }
+  catch { return new Set(); }
+}
+
+function hideVenue(slug) {
+  const hidden = getHiddenVenues();
+  hidden.add(slug);
+  localStorage.setItem(HIDDEN_VENUES_KEY, JSON.stringify([...hidden]));
+  const label = document.querySelector(`.venue-checkbox input[data-venue="${slug}"]`)?.closest(".venue-checkbox");
+  if (label) label.remove();
+  _updateVenueRestoreBtn();
+  applyAllFilters();
+  updateCityChipStates();
+}
+
+function restoreHiddenVenues() {
+  localStorage.removeItem(HIDDEN_VENUES_KEY);
+  renderVenueFilters();
+  applyAllFilters();
+  updateCityChipStates();
+}
+
+function _updateVenueRestoreBtn() {
+  const existing = document.getElementById("venue-restore-btn");
+  if (existing) existing.remove();
+  const hidden = getHiddenVenues();
+  if (hidden.size === 0) return;
+  const container = document.getElementById("venue-filters");
+  const btn = document.createElement("button");
+  btn.id = "venue-restore-btn";
+  btn.className = "venue-restore-btn";
+  btn.textContent = `↺ restore hidden (${hidden.size})`;
+  btn.addEventListener("click", restoreHiddenVenues);
+  container.appendChild(btn);
+}
+
 async function loadVenues(attempt = 0) {
   try {
     const resp = await fetch(`${API_BASE}/api/venues`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    venues = await resp.json();
+    const allVenues = await resp.json();
+    venues = SITE_CONFIG.city
+      ? allVenues.filter((v) => v.city === SITE_CONFIG.city)
+      : allVenues;
     renderFilters();
   } catch (err) {
     console.error("Failed to load venues:", err);
@@ -48,16 +96,39 @@ function renderCityFilters() {
 
 function renderVenueFilters() {
   const container = document.getElementById("venue-filters");
+  const hidden = getHiddenVenues();
+
+  // Preserve which venues are currently checked so restoring a hidden venue
+  // doesn't reset other venues' selected/unselected state.
+  const currentChecked = new Set();
+  document.querySelectorAll(".venue-checkbox input[type=checkbox]").forEach((cb) => {
+    if (cb.checked) currentChecked.add(cb.dataset.venue);
+  });
+  const hasExistingState = currentChecked.size > 0;
+
   container.innerHTML = venues
-    .map(
-      (v) => `
+    .filter((v) => !hidden.has(v.slug))
+    .map((v) => {
+      // Newly-visible venues (just restored) default to checked.
+      // Existing venues preserve their prior state.
+      const isChecked = !hasExistingState || currentChecked.has(v.slug) || !document.querySelector(`[data-venue="${v.slug}"]`);
+      return `
       <label class="venue-checkbox" data-venue-city="${v.city}">
-        <input type="checkbox" data-venue="${v.slug}" checked onchange="toggleVenue('${v.slug}')">
+        <input type="checkbox" data-venue="${v.slug}" ${isChecked ? "checked" : ""} onchange="toggleVenue('${v.slug}')">
         <span class="venue-dot" style="background-color: ${v.color}"></span>
         <span class="venue-label">${v.name}</span>
-      </label>`
-    )
+        <button class="venue-hide-btn" data-slug="${v.slug}" tabindex="-1" aria-label="Hide ${v.name}">✕</button>
+      </label>`;
+    })
     .join("");
+  container.querySelectorAll(".venue-hide-btn").forEach((btn) => {
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      hideVenue(this.dataset.slug);
+    });
+  });
+  _updateVenueRestoreBtn();
 }
 
 function setupSearch() {
@@ -144,49 +215,78 @@ function _checkEventVisible(ev, venueMap) {
   return true;
 }
 
-// Apply all active filters to every event currently in the calendar.
-function applyAllFilters() {
-  if (!calendar) return;
+// Venues where multiple same-day events should collapse to one chip.
+const GROUPED_VENUE_SLUGS = new Set(["dpac"]);
 
-  // Build a slug→checked map once so _checkEventVisible never touches the DOM per event.
+// Returns the subset of _allEventsCache that should be visible given current filter
+// state. Used by the function-based event source — returns plain JS objects so
+// FullCalendar renders them without ever calling setProp on existing EventImpls.
+function _getFilteredEvents() {
   const venueMap = {};
   document.querySelectorAll(".venue-checkbox input[type=checkbox]").forEach((cb) => {
     venueMap[cb.dataset.venue] = cb.checked;
   });
+  getHiddenVenues().forEach((slug) => { venueMap[slug] = false; });
+  const hiddenObj = typeof getHidden === "function" ? getHidden() : {};
 
-  calendar.getEvents().forEach((ev) => {
-    const target = _checkEventVisible(ev, venueMap) ? "auto" : "none";
-    if (ev.display !== target) ev.setProp("display", target);
+  // Apply venue / search / individually-hidden filters.
+  const visible = _allEventsCache.filter((ev) => {
+    if (hiddenObj[ev.id]) return false;
+    return _checkEventVisible(ev, venueMap);
   });
 
-  // After normal filters, collapse venues that have multiple events per day
-  // down to one visible chip (extras stay in the store for the modal).
-  _applyVenueDayGrouping();
+  // DPAC grouping: keep one event per day, prefer on_sale over others.
+  const dpacGroups = {};
+  visible.forEach((ev) => {
+    const slug = ev.extendedProps?.venue_slug;
+    if (!GROUPED_VENUE_SLUGS.has(slug)) return;
+    const key = slug + "|" + ev.extendedProps?.date;
+    if (!dpacGroups[key]) {
+      dpacGroups[key] = { primary: ev, all: [ev] };
+    } else {
+      dpacGroups[key].all.push(ev);
+      if (ev.extendedProps?.status === "on_sale" &&
+          dpacGroups[key].primary.extendedProps?.status !== "on_sale") {
+        dpacGroups[key].primary = ev;
+      }
+    }
+  });
+  const suppressed = new Set();
+  Object.values(dpacGroups).forEach(({ primary, all }) => {
+    if (all.length > 1) all.forEach((ev) => { if (ev !== primary) suppressed.add(ev.id); });
+  });
+
+  return visible.filter((ev) => !suppressed.has(ev.id));
 }
 
-// Venues where multiple same-day events should collapse to one chip.
-const GROUPED_VENUE_SLUGS = new Set(["dpac"]);
-
-function _applyVenueDayGrouping() {
-  if (!calendar) return;
-
-  // Group visible events by venue+date for grouped venues.
-  const groups = {};
-  calendar.getEvents().forEach((ev) => {
-    const slug = ev.extendedProps.venue_slug;
-    if (!GROUPED_VENUE_SLUGS.has(slug) || ev.display === "none") return;
-    const key = slug + "|" + ev.extendedProps.date;
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(ev);
+// rAF gate: absorbs rapid-fire calls so only one filter pass runs per animation frame.
+let _filterRafId = null;
+function applyAllFilters() {
+  if (_filterRafId !== null) return;
+  _filterRafId = requestAnimationFrame(() => {
+    _filterRafId = null;
+    _applyAllFiltersNow();
   });
+}
 
-  Object.values(groups).forEach((group) => {
-    if (group.length <= 1) return;
-    // Prefer on_sale as the visible chip; fall back to first.
-    const primary = group.find((ev) => ev.extendedProps.status === "on_sale") || group[0];
-    group.forEach((ev) => {
-      if (ev !== primary && ev.display !== "none") ev.setProp("display", "none");
-    });
+// Triggers a re-render by asking FullCalendar to refetch events. The function-based
+// event source calls _getFilteredEvents() and returns only the visible subset as
+// plain JS objects — no setProp mutations needed.
+function _applyAllFiltersNow() {
+  if (!calendar) return;
+  if (document.activeElement && document.activeElement !== document.body) {
+    document.activeElement.blur();
+  }
+
+  // Pin the calendar height before refetch so the page doesn't briefly shrink
+  // (which causes the browser to auto-adjust scrollY with no JS call stack).
+  const calEl = document.getElementById("calendar");
+  if (calEl) calEl.style.minHeight = calEl.offsetHeight + "px";
+
+  calendar.refetchEvents();
+
+  requestAnimationFrame(() => {
+    if (calEl) calEl.style.minHeight = "";
   });
 }
 
@@ -222,8 +322,11 @@ function toggleCity(city) {
   } else if (cityChecked === cityTotal && totalChecked === cityTotal) {
     // Only this city is showing → restore all
     allCheckboxes.forEach((cb) => { cb.checked = true; });
+  } else if (cityChecked === cityTotal) {
+    // All this city's venues are already checked → uncheck them
+    cityCheckboxes.forEach((cb) => { cb.checked = false; });
   } else {
-    // Mixed state → enable all venues in this city
+    // Some city venues are unchecked → enable all in this city
     cityCheckboxes.forEach((cb) => { cb.checked = true; });
   }
 

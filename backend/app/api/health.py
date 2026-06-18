@@ -1,4 +1,5 @@
 """Health check endpoint."""
+import os
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,4 +30,5 @@ async def health_check(session: AsyncSession = Depends(get_session)):
         event_count=event_count,
         venue_count=venue_count,
         last_scrape=last_scrape,
+        version=os.environ.get("GIT_COMMIT", "unknown"),
     )

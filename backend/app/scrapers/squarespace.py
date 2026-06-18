@@ -52,6 +52,10 @@ class SquarespaceScraper(BaseScraper):
             if not title:
                 return None
 
+            exclude = self.config.get("exclude_titles", [])
+            if any(title.lower() == ex.lower() for ex in exclude):
+                return None
+
             # Squarespace uses millisecond timestamps
             start_ts = item.get("startDate")
             if not start_ts:

@@ -23,8 +23,14 @@
 </head>
 <body>
   <div id="loading-screen" aria-live="polite" aria-label="Loading events">
-    <div class="ls-line">
-      <span class="ls-prompt">&gt;</span><span class="ls-cursor"></span>
+    <div class="ls-block">
+      <div class="ls-line">
+        <span class="ls-prompt">&gt;</span><span class="ls-text">building ur calendar...</span><span class="ls-cursor"></span>
+      </div>
+      <div class="ls-bar-line">
+        <span class="ls-bar-bracket">[</span><span class="ls-bar-track" id="ls-bar-track"></span><span class="ls-bar-bracket">]</span>
+        <span class="ls-bar-pct" id="ls-bar-pct">&nbsp;&nbsp;0%</span>
+      </div>
     </div>
   </div>
 
@@ -32,11 +38,11 @@
 
     <!-- Header -->
     <header class="app-header">
-      <div class="ascii-title">   __       _                   __                __                                    __
-  / /______(_)___ _____  ____ _/ /__        _____/ /_  ____ _      _______  ____  ___  / /_
- / __/ ___/ / __ `/ __ \/ __ `/ / _ \______/ ___/ __ \/ __ \ | /| / / ___/ / __ \/ _ \/ __/
-/ /_/ /  / / /_/ / / / / /_/ / /  __/______\__ / / / / /_/ / |/ |/ /\__ / / / / /  __/ /_
-\__/_/  /_/\__,_/_/ /_/\__, /_/\___/     /____/_/ /_/\____/|__/|__/____(_)_/ /_/\___/\__/<span class="cursor"></span>
+      <div class="ascii-title">   __       _                   __               __                                    __
+  / /______(_)___ _____  ____ _/ /__       _____/ /_  ____ _      _______  ____  ___  / /_
+ / __/ ___/ / __ `/ __ \/ __ `/ / _ \_____/ ___/ __ \/ __ \ | /| / / ___/ / __ \/ _ \/ __/
+/ /_/ /  / / /_/ / / / / /_/ / /  __/_____\__ / / / / /_/ / |/ |/ /\__ / / / / /  __/ /_
+\__/_/  /_/\__,_/_/ /_/\__, /_/\___/    /____/_/ /_/\____/|__/|__/____(_)_/ /_/\___/\__/<span class="cursor"></span>
                       /____/                                                                </div>
       <span class="site-title">triangle-shows<span class="cursor"></span></span>
       <p class="site-subtitle">live music across the triangle on one calendar</p>
@@ -56,7 +62,7 @@
 
       <!-- Search -->
       <div class="filter-section search-wrapper">
-        <input type="text" id="search-input" placeholder="grep artists...">
+        <input type="text" id="search-input" placeholder="search artists/events...">
       </div>
 
       <!-- City Filter -->
@@ -123,7 +129,7 @@
     <!-- Calendar -->
     <main class="calendar-container">
       <div id="calendar"></div>
-      <footer class="site-credit">mostly made by <a href="https://claude.ai/claude-code" target="_blank" rel="noopener">claude code</a>, piloted by <a href="http://bsky.app/profile/tyfi.bsky.social" target="_blank" rel="noopener">@tyfi</a>. it's on <a href="https://github.com/ty-fi/triangle-shows" target="_blank" rel="noopener">github</a>.</footer>
+      <footer class="site-credit">made by <a href="http://bsky.app/profile/tyfi.bsky.social" target="_blank" rel="noopener">@tyfi</a>. it's on <a href="https://github.com/ty-fi/triangle-shows" target="_blank" rel="noopener">github</a>.</footer>
     </main>
   </div>
 
