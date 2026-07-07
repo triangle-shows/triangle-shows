@@ -56,6 +56,21 @@ Push to `main` triggers Cloud Build automatically → deploys to Cloud Run (`tri
 
 For visual/color changes: push one change at a time and confirm it looks correct on the live site before stacking further changes.
 
+## Database & migrations
+
+**Git branches isolate code, not data.** There is a single shared Neon PostgreSQL database behind one secret (`triangle-shows-db-url`). A feature branch does *not* get its own database — Neon has a branching feature, but this repo doesn't wire it up automatically.
+
+What this means in practice:
+
+- **Feature branches never touch Neon.** Cloud Build deploys on push to `main` only, so un-merged work can't reach the production database.
+- **Local dev never touches Neon.** `docker-compose.yml` and `backend/.env` point `DATABASE_URL` at a local Postgres, so `docker-compose up`, scrapes, and migrations all run against throwaway local data. Experiment freely.
+- **Neon is touched only on merge to `main`.** On the first boot of the new Cloud Run revision, the app runs `alembic upgrade head` at startup (in `main.py`'s lifespan) against Neon. That is the moment a new migration actually executes in production.
+
+Because there is no separate staging copy of the data, a migration proves itself against real data only at deploy time. So:
+
+- **Write backward-compatible ("expand") migrations.** Add columns as nullable or with a default; don't drop/rename in the same change that ships the code depending on it. That keeps a Cloud Run rollback safe — old code simply ignores new columns, and the DB stays at the newer Alembic revision (only an explicit `alembic downgrade` removes anything).
+- **Rehearse risky migrations on a Neon branch.** For anything beyond a simple additive change, create a Neon branch of the database (copy-on-write, cheap), point a local run at that branch's connection string, verify, then discard it. That gives you production-shaped data without risk — the DB-side equivalent of a feature branch.
+
 ## Useful commands
 
 ```bash
