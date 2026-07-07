@@ -61,6 +61,7 @@ def _event_to_response(event: Event) -> EventResponse:
         age_restriction=event.age_restriction,
         description=event.description,
         source=event.source,
+        is_live_music=event.is_live_music,
         venue_name=event.venue.name if event.venue else None,
         venue_slug=event.venue.slug if event.venue else None,
         venue_city=event.venue.city if event.venue else None,
@@ -199,6 +200,8 @@ async def get_fullcalendar_events(
                 "status": event.status,
                 "age_restriction": event.age_restriction,
                 "description": event.description,
+                # Drives the client-side "Include non-live music?" toggle (filters.js).
+                "is_live_music": event.is_live_music,
             },
         })
 

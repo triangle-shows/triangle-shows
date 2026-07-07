@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     SCRAPE_ALLOWED_SERVICE_ACCOUNTS: str = ""  # comma-separated service-account emails
     SCRAPE_OIDC_AUDIENCE: str = ""  # optional; the audience configured on the scheduler job
 
+    # Admin subsite (/admin). Both must be set for the admin to be reachable —
+    # if ADMIN_PASSWORD is blank, the admin login is disabled (fails closed).
+    ADMIN_PASSWORD: str = ""       # shared password exchanged for a session cookie
+    SESSION_SECRET: str = ""       # signs the admin session cookie; MUST be set in
+                                   # production so cookies validate across instances
+                                   # (a random per-process key is used if left blank)
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

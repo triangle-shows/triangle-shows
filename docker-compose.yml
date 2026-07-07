@@ -20,6 +20,10 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/triangle_shows
       ENABLE_SCHEDULER: "false"
       LOG_LEVEL: INFO
+      # Local-only admin credentials (the /admin subsite). Not secrets — production
+      # uses Secret Manager. Log in at http://localhost:8000/admin with this password.
+      ADMIN_PASSWORD: devpassword
+      SESSION_SECRET: local-dev-session-secret
     volumes:
       - ./backend:/app
       - ./frontend:/frontend

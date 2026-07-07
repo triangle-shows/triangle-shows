@@ -10,7 +10,7 @@ Requires: app.database (Base), PostgreSQL via asyncpg/SQLAlchemy async.
 
 from datetime import datetime, date, time
 from typing import Optional
-from sqlalchemy import String, Integer, Float, Text, Date, Time, DateTime, ForeignKey, JSON
+from sqlalchemy import String, Integer, Float, Text, Date, Time, DateTime, ForeignKey, JSON, Boolean, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 
@@ -83,6 +83,16 @@ class Event(Base):
     source: Mapped[str] = mapped_column(String(50))  # scraper name that produced this event, e.g. "ticketmaster"
     source_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)  # SHA-256 of key fields; used by manager.py to deduplicate on upsert
+
+    # --- Live-music classification (see app/classifier.py) ---
+    # Effective flag the calendar and iCal feeds filter on. Materialized (not computed
+    # on read) so filtering is a simple `WHERE is_live_music = true`. Recomputed after
+    # every scrape by ScrapeManager.reclassify_all() — except on rows an admin has
+    # manually overridden (is_manual_override=True), which are left untouched.
+    is_live_music: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    is_manual_override: Mapped[bool] = mapped_column(Boolean, default=False)  # True once an admin sets the flag by hand
+    classification_reason: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # human-readable why, e.g. "recurring: 6 dates", "keyword: trivia", "manual"
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -106,3 +116,34 @@ class ScrapeLog(Base):
     duration_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     venue: Mapped["Venue"] = relationship(back_populates="scrape_logs")
+
+
+class SeriesOverride(Base):
+    """An admin decision that applies to a whole recurring series, not one event.
+
+    A recurring series (weekly karaoke, a standing jazz jam, a monthly comedy
+    showcase, ...) produces many Event rows over time, and new ones appear on each
+    scrape. A per-event override can't cover future instances, so a series-level
+    rule is keyed by (venue_id, normalized_name) — the same key the recurrence
+    detector groups on (see app.classifier.normalize_series_name). During
+    ScrapeManager.reclassify_all(), a matching rule forces is_live_music for every
+    event in the series, including instances scraped later.
+
+    Precedence, most specific first: a per-event Event.is_manual_override wins over
+    a SeriesOverride, which in turn wins over automatic classification.
+    """
+    __tablename__ = "series_overrides"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"), index=True)
+    normalized_name: Mapped[str] = mapped_column(String(200))  # matches app.classifier.normalize_series_name(event.name)
+    display_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # a readable example name for the admin UI
+    is_live_music: Mapped[bool] = mapped_column(Boolean)  # the value forced onto every event in the series
+    note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # optional admin note explaining the decision
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # One rule per (venue, series name); the admin endpoint upserts on this key.
+    __table_args__ = (
+        UniqueConstraint("venue_id", "normalized_name", name="uq_series_override_key"),
+    )

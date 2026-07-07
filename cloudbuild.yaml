@@ -12,6 +12,12 @@
 #      gcloud secrets create triangle-shows-tm-api-key \
 #        --data-file=- <<< "your_ticketmaster_api_key"
 #
+#      # Admin subsite (/admin) — REQUIRED before enabling the admin secrets in the
+#      # deploy step below, or the deploy will fail on a missing secret:
+#      gcloud secrets create triangle-shows-admin-password \
+#        --data-file=- <<< "a-strong-admin-password"
+#      openssl rand -base64 32 | gcloud secrets create triangle-shows-session-secret --data-file=-
+#
 #   3. Grant the Cloud Build service account permission to deploy to Cloud Run
 #      and access secrets (in IAM Console, or):
 #      PROJECT_NUM=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
@@ -101,6 +107,11 @@ steps:
       - --set-env-vars=APP_ENV=production,ENABLE_SCHEDULER=false,LOG_LEVEL=INFO
       - --update-secrets=DATABASE_URL=triangle-shows-db-url:latest
       - --update-secrets=TICKETMASTER_API_KEY=triangle-shows-tm-api-key:latest
+      # Admin subsite — uncomment BOTH lines only after creating the two secrets
+      # above (see step 2). Without them the /admin login is disabled (fails closed),
+      # so leaving these commented is safe; the rest of the site is unaffected.
+      # - --update-secrets=ADMIN_PASSWORD=triangle-shows-admin-password:latest
+      # - --update-secrets=SESSION_SECRET=triangle-shows-session-secret:latest
 
 images:
   - $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/api:$COMMIT_SHA

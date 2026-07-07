@@ -26,7 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import settings
-from app.models import Venue, Event, ScrapeLog
+from app.classifier import classification_updates, ALWAYS_LIVE_VENUE_SLUGS
+from app.models import Venue, Event, ScrapeLog, SeriesOverride
 from app.scrapers.base import BaseScraper, ScrapedEvent
 from app.scrapers.ticketmaster import TicketmasterScraper
 
@@ -405,6 +406,62 @@ class ScrapeManager:
             "expired": len(plan.expired),
         }
 
+    # --- Classification ---
+
+    async def reclassify_all(self) -> dict:
+        """Recompute is_live_music for all upcoming events.
+
+        Runs after every bulk scrape. Recurrence is a cross-event signal, so this
+        always considers the full set of future events regardless of which venues
+        were just scraped. Admin decisions are respected: per-event manual overrides
+        (is_manual_override=True) are left untouched, and series-level overrides are
+        applied to every matching event — including instances scraped later.
+        Returns {events, changed} counts.
+        """
+        today = date.today()
+        result = await self.session.execute(
+            select(Event).where(Event.date >= today)
+        )
+        events = result.scalars().all()
+
+        # Load series-level overrides, keyed to match classifier.normalize_series_name.
+        so_result = await self.session.execute(select(SeriesOverride))
+        series_overrides = {
+            (so.venue_id, so.normalized_name): (so.is_live_music, so.note)
+            for so in so_result.scalars().all()
+        }
+
+        # Resolve always-live venues (e.g. DPAC) to their ids for the exemption.
+        venue_rows = await self.session.execute(select(Venue.id, Venue.slug))
+        exempt_venue_ids = {
+            vid for vid, slug in venue_rows.all() if slug in ALWAYS_LIVE_VENUE_SLUGS
+        }
+
+        # classification_updates omits manually-overridden rows (those flags survive),
+        # forces always-live venues, and applies series overrides above auto.
+        updates = classification_updates(
+            events,
+            series_overrides=series_overrides,
+            exempt_venue_ids=exempt_venue_ids,
+        )
+
+        changed = 0
+        for ev in events:
+            if ev.id not in updates:
+                continue
+            is_live, reason = updates[ev.id]
+            if ev.is_live_music != is_live or ev.classification_reason != reason:
+                ev.is_live_music = is_live
+                ev.classification_reason = reason
+                changed += 1
+
+        await self.session.commit()
+        logger.info(
+            f"Reclassified {len(events)} upcoming events; {changed} changed "
+            f"(manual overrides preserved)"
+        )
+        return {"events": len(events), "changed": changed}
+
     # --- Bulk scrape entry points ---
 
     async def scrape_all(self, scraper_types: Optional[list[str]] = None) -> list[dict]:
@@ -422,6 +479,9 @@ class ScrapeManager:
             r = await self.scrape_venue(venue)
             results.append(r)
 
+        # Recompute live-music flags across all upcoming events now that new data is in.
+        await self.reclassify_all()
+
         return results
 
     async def scrape_ticketmaster(self) -> list[dict]:
@@ -438,4 +498,8 @@ class ScrapeManager:
         for venue in venues:
             r = await self.scrape_venue(venue)
             results.append(r)
+
+        # Recompute live-music flags across all upcoming events now that new data is in.
+        await self.reclassify_all()
+
         return results
