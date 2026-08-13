@@ -76,6 +76,8 @@ class CarolinaTheatreScraper(BaseScraper):
     def _parse_card(self, card) -> Optional[ScrapedEvent]:
         """Extract event fields from a single eventCard element; returns None on any failure."""
         try:
+            if -1 == (card.attrs['data-filterme'].find('music')):
+                return None
             # URL — the wrapping <a> inside the card
             a = card.select_one("a[href]")
             if not a:
