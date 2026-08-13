@@ -59,9 +59,7 @@ class ScrapedEvent:
 # Mimic a real browser so venue sites don't block the scraper as a bot
 BROWSER_HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
+        "curl/8.5.0"
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
@@ -151,4 +149,4 @@ class BaseScraper(ABC):
     @staticmethod
     def normalize_name(name: str) -> str:
         """Normalize event/artist name for comparison."""
-        return re.sub(r'\s+', ' ', name.strip())
+        return re.sub(r'\s+', ' ', name.strip()) #this is essentially dead code, only used by ticketmaster
