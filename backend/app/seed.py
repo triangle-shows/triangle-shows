@@ -276,6 +276,17 @@ VENUES = [
         "scraper_config": {"url": "https://slimsdivebar.com/music-and-events/"},
         "color": "#4a3a6a",  # deep plum (Raleigh)
     },
+    {
+        "name": "The Carolina Theatre",
+        "slug": "carolina-theatre",
+        "city": "Durham",
+        "capacity": 800,
+        "size_category": "large",
+        "website": "https://carolinatheatre.org/",
+        "scraper_type": "carolina_theatre",
+        "scraper_config": {"url": "https://carolinatheatre.org/events/"},
+        "color": "#F5D765",  # yellow (Durham)
+    },
 ]
 
 
@@ -286,7 +297,7 @@ async def seed_venues():
     await init_db()
     async with async_session() as session:
         # Remove discontinued venues (cascade deletes their events)
-        REMOVED_SLUGS = ["carolina-theatre"]
+        REMOVED_SLUGS = [""]
         for slug in REMOVED_SLUGS:
             result = await session.execute(select(Venue).where(Venue.slug == slug))
             venue = result.scalar_one_or_none()
