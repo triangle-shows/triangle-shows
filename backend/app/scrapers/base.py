@@ -103,9 +103,10 @@ class BaseScraper(ABC):
         if not text:
             return None, None
         text = text.strip().lower()
-        if text in ("free", "free!", "no cover"):
+        if any(free_words in text for free_words in ["free", "free!", "no cover"]):
             return 0.0, 0.0
-        prices = re.findall(r'\$?\s*(\d+(?:\.\d{2})?)', text)
+
+        prices = re.findall(r'[$€]{1}(?P<amount>[\d,\.]+(?>\.\d{2}){0,})\b', text)
         if len(prices) >= 2:
             return float(prices[0]), float(prices[1])
         elif len(prices) == 1:
