@@ -132,8 +132,8 @@ VENUES = [
         "capacity": 250,
         "size_category": "small",
         "website": "https://www.thepinhook.com/",
-        "scraper_type": "rhp_events",
-        "scraper_config": {"url": "https://www.thepinhook.com/events/"},
+        "scraper_type": "venuepilot",
+        "scraper_config": {"account_id": 2820},
         "color": "#2a5494",  # cornflower sapphire (Durham)
     },
     {
