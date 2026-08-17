@@ -9,8 +9,9 @@ Requires: Venue config with a "url" key pointing to a Squarespace /events?format
 # --- Imports ---
 import logging
 from datetime import datetime, date, time
+import pytz
 from typing import Optional
-
+from bs4 import BeautifulSoup
 import httpx
 
 from app.scrapers.base import BaseScraper, ScrapedEvent, BROWSER_HEADERS
@@ -75,10 +76,10 @@ class SquarespaceScraper(BaseScraper):
             start_ts = item.get("startDate")
             if not start_ts:
                 return None
-
+            timezone = pytz.timezone("US/Eastern")
             # Convert from milliseconds
             if isinstance(start_ts, (int, float)):
-                dt = datetime.fromtimestamp(start_ts / 1000)
+                dt = datetime.fromtimestamp(start_ts / 1000, timezone)
             else:
                 dt = datetime.fromisoformat(str(start_ts).replace("Z", "+00:00"))
 
@@ -90,12 +91,12 @@ class SquarespaceScraper(BaseScraper):
             end_ts = item.get("endDate")
 
             # Extract body/description — fall back to raw body if no excerpt
-            excerpt = item.get("excerpt", "") or item.get("body", "")
-            if isinstance(excerpt, str):
-                description = excerpt[:500].strip() or None
-            else:
-                description = None
-
+            soup = BeautifulSoup(item.get("excerpt", "") or item.get("body", ""), "lxml")
+            description = ''
+            html_content = soup.select("div.sqs-html-content")
+            # start at 1 bc [0] is just the title again
+            for index in range(1, len(html_content[0].contents)):
+                description += html_content[0].contents[index].text + "\r\n"
             # Image
             image_url = None
             if item.get("assetUrl"):
