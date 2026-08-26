@@ -52,7 +52,7 @@ Triangle Shows aggregates live music listings from 21+ venues across the Triangl
 
 ## Running locally
 
-See [[SELF-HOSTING]] for setup instructions.
+See [SELF-HOSTING.md](docs/SELF-HOSTING.md) for setup instructions.
 
 ---
 
@@ -79,6 +79,8 @@ frontend/
     modal.js        # Event detail modal
     favorites.js    # Heart, hide, restore, and export logic
 tools/              # Dev utilities (see below)
+  mockups/          # Static HTML design explorations
+docs/               # Self-hosting guide
 ```
 
 ### Developer tools
@@ -147,7 +149,7 @@ Upcoming features and ideas are tracked in [GitHub Issues](https://github.com/ty
 
 I'm looking for co-developers — this thing could be really cool and TBH I'm not a professional developer. Reach out to me if you want to help build it!
 
-See [GIT_CONVENTIONS.md](GIT_CONVENTIONS.md) for the branch/PR workflow if you want to contribute.
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for the branch/PR workflow if you want to contribute.
 
 ---
 
