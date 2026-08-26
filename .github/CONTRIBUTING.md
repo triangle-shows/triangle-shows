@@ -1,19 +1,17 @@
-# Git Conventions
+# Contributing
 
 ## Branch structure
 
 ```
-main          ← production; always deployable; protected
-  └── dev     ← integration branch; feature branches merge here first
-        ├── feature/xyz
-        ├── feature/abc
-        └── fix/xyz
+main                ← production; always deployable; protected
+  ├── feature/xyz
+  ├── feature/abc
+  └── fix/xyz
 ```
 
-- `main` only receives merges from `dev` (or a `hotfix/*` branch for urgent prod fixes)
-- Feature and fix branches are created from `dev`, worked on, then merged back to `dev` via PR
-- When `dev` is stable and ready to ship, open a PR from `dev` → `main` to trigger a deploy
-- `hotfix/*` branches are the exception — they branch from `main` directly for urgent production patches
+- `main` is the only long-lived branch. It is always deployable, and every push to it deploys.
+- Feature and fix branches are created from `main`, worked on, then merged back into `main` via PR.
+- There is no integration branch. Work is combined by merging PRs into `main`, not by staging them elsewhere first.
 
 ## Branch naming
 
@@ -21,24 +19,31 @@ main          ← production; always deployable; protected
 |--------|---------|
 | `feature/` | New functionality |
 | `fix/` | Bug fixes |
-| `hotfix/` | Urgent production patches branched from `main` |
 
 Names should be short and descriptive: `feature/event-submissions`, `fix/filter-performance`.
 
-## Branch protection (GitHub Settings → Branches)
+## Branch protection
 
-- **`main`**: require PR to merge, no direct push, optionally require CI to pass
-- **`dev`**: optional — at minimum block force-pushes
+`main` is protected by a repository ruleset (GitHub Settings → Rules → Rulesets):
 
-Set `dev` as the default branch (GitHub Settings → General → Default branch) so new PRs target `dev` by default.
+| Rule | Effect |
+|------|--------|
+| Require a pull request | No direct pushes to `main` — every change arrives through a PR |
+| Restrict deletions | The branch itself cannot be deleted |
+| Block force pushes | History can only move forward; nothing already on `main` can be rewritten or dropped |
+
+"Restrict deletions" protects the *branch*, not files — a PR that deletes files merges normally.
+
+The ruleset currently targets the default branch rather than `main` by name. Since `main` is the default, that resolves correctly today. If the default branch is ever changed, repoint the ruleset to `refs/heads/main` first, or `main` will silently lose its protection.
+
+Automatic head-branch deletion is on, so a feature branch is removed from GitHub once its PR merges. Your local copy survives — clean up with `git fetch --prune` and `git branch -d <branch>`.
 
 ## Pull requests
 
-- Open a PR for any non-trivial change — new features, significant refactors
-- Small fixes can be committed directly to `dev`; the `dev` → `main` merge should always be a PR
-- Use **Draft PRs** for in-flight work you want tracked but not yet merged
-- Use `closes #12` in PR descriptions to auto-close linked issues when the PR merges
-- The PR description is where you record *why* the change was made — commit messages cover *what*
+- **Every change goes through a PR.** The ruleset blocks direct pushes to `main` for everyone except repository admins, who can bypass it. Treat that bypass as an escape hatch, not the workflow.
+- Use **Draft PRs** for in-flight work you want tracked but not yet merged.
+- Use `closes #12` in PR descriptions to auto-close linked issues when the PR merges.
+- The PR description is where you record *why* the change was made — commit messages cover *what*.
 
 ## Issue and project tracking
 
@@ -50,11 +55,11 @@ Set `dev` as the default branch (GitHub Settings → General → Default branch)
 
 ## Deployment
 
-Push to `main` triggers Cloud Build automatically → deploys to Cloud Run (`triangle-shows`, `us-east1`).
+Merging a PR into `main` triggers Cloud Build automatically → deploys to Cloud Run (`triangle-shows`, `us-east1`).
 
-**Every merge to `main` incurs a small GCP build and hosting cost.** Avoid merging trivial or experimental changes directly — batch related work into a single `dev` → `main` PR where possible. See [SELF-HOSTING.md](../docs/SELF-HOSTING.md) if you want to test changes locally before deploying.
+**Every merge to `main` incurs a small GCP build and hosting cost, and there is no staging environment.** Because each merged PR deploys on its own, group related work into a single PR rather than merging a string of small ones. Test locally first — see [SELF-HOSTING.md](../docs/SELF-HOSTING.md).
 
-For visual/color changes: push one change at a time and confirm it looks correct on the live site before stacking further changes.
+For visual/color changes: merge one change at a time and confirm it looks correct on the live site before stacking further changes.
 
 ## Database & migrations
 
@@ -87,10 +92,14 @@ git branch -a
 # See what's on a branch that isn't in main
 git log origin/main..origin/feature/my-feature --oneline
 
-# Rebase a feature branch onto dev
+# Bring a feature branch up to date with main
 git checkout feature/my-feature
-git rebase origin/dev
+git rebase origin/main
 git push --force-with-lease origin feature/my-feature
+
+# Clean up after a PR merges (GitHub deletes the remote branch itself)
+git fetch --prune
+git branch -d feature/my-feature
 
 # Delete a remote branch
 git push origin --delete feature/old-branch
