@@ -52,7 +52,7 @@ Set `dev` as the default branch (GitHub Settings → General → Default branch)
 
 Push to `main` triggers Cloud Build automatically → deploys to Cloud Run (`triangle-shows`, `us-east1`).
 
-**Every merge to `main` incurs a small GCP build and hosting cost.** Avoid merging trivial or experimental changes directly — batch related work into a single `dev` → `main` PR where possible. See [[SELF-HOSTING]] if you want to test changes locally before deploying.
+**Every merge to `main` incurs a small GCP build and hosting cost.** Avoid merging trivial or experimental changes directly — batch related work into a single `dev` → `main` PR where possible. See [SELF-HOSTING.md](../docs/SELF-HOSTING.md) if you want to test changes locally before deploying.
 
 For visual/color changes: push one change at a time and confirm it looks correct on the live site before stacking further changes.
 
