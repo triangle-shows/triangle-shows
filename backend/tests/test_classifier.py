@@ -49,6 +49,8 @@ from app.classifier import (  # noqa: E402
     criteria_summary,
     reclassify_floor,
     RECLASSIFY_PAST_DAYS,
+    RECURRENCE_THRESHOLD,
+    RUN_GAP_DAYS,
 )
 
 
@@ -70,6 +72,11 @@ D0 = date(2026, 8, 1)
 
 def _weekly(n: int, start: date = D0) -> list[date]:
     return [start + timedelta(days=7 * i) for i in range(n)]
+
+
+def _consecutive(n: int, start: date = D0) -> list[date]:
+    """n back-to-back nights — a residency, not a series."""
+    return [start + timedelta(days=i) for i in range(n)]
 
 
 # --- classify_one: keywords ---
@@ -217,6 +224,86 @@ def test_recurrence_groups_dated_name_variants():
     assert set(find_recurring_event_ids(events)) == {1, 2, 3}
 
 
+# --- recurrence: a run is not a series (review item #1) ---
+
+def test_multi_night_residency_is_not_a_series():
+    """A band booked three consecutive nights is the marquee listing, not karaoke."""
+    events = [FakeEvent(i, 1, "Hiss Golden Messenger", d)
+              for i, d in enumerate(_consecutive(3))]
+    assert find_recurring_event_ids(events) == {}
+
+
+def test_long_residency_is_not_a_series():
+    """DPAC-style eight-night Broadway runs must survive even without the exemption."""
+    events = [FakeEvent(i, 1, "Death Becomes Her", d)
+              for i, d in enumerate(_consecutive(8))]
+    assert find_recurring_event_ids(events) == {}
+
+
+def test_a_gap_within_the_run_window_stays_one_occasion():
+    """Fri and Sun with Saturday off is still one booking."""
+    dates = [D0, D0 + timedelta(days=RUN_GAP_DAYS), D0 + timedelta(days=2 * RUN_GAP_DAYS)]
+    events = [FakeEvent(i, 1, "Weekend Stand", d) for i, d in enumerate(dates)]
+    assert find_recurring_event_ids(events) == {}
+
+
+def test_weekly_series_is_still_detected():
+    """The behavior the feature exists for must be unaffected by the run rule."""
+    events = [FakeEvent(i, 1, "Tuesday Karaoke", d)
+              for i, d in enumerate(_weekly(RECURRENCE_THRESHOLD))]
+    assert len(find_recurring_event_ids(events)) == RECURRENCE_THRESHOLD
+
+
+def test_repeating_two_night_run_is_a_series():
+    """Fri+Sat every week is a series — three occasions, six dates."""
+    dates = []
+    for week in range(3):
+        dates.append(D0 + timedelta(days=7 * week))
+        dates.append(D0 + timedelta(days=7 * week + 1))
+    events = [FakeEvent(i, 1, "Emo Weekend", d) for i, d in enumerate(dates)]
+
+    recurring = find_recurring_event_ids(events)
+
+    assert len(recurring) == 6
+    assert all(count == 6 for count in recurring.values()), "count reports dates, not occasions"
+
+
+def test_monthly_series_is_detected():
+    """Sparse cadences are series too — the run rule must not swallow them."""
+    dates = [D0, D0 + timedelta(days=30), D0 + timedelta(days=60)]
+    events = [FakeEvent(i, 1, "First Friday Market", d) for i, d in enumerate(dates)]
+    assert len(find_recurring_event_ids(events)) == 3
+
+
+# --- recurrence: unnamed events are not a series (review item #3) ---
+
+def test_empty_names_do_not_form_a_series():
+    """A scraper emitting nameless records must not hide them as a phantom series."""
+    events = [FakeEvent(i, 1, "", d) for i, d in enumerate(_weekly(4))]
+    assert find_recurring_event_ids(events) == {}
+
+
+def test_digit_only_names_do_not_form_a_series():
+    """These normalize to '' and are unrelated events, not one series."""
+    events = [
+        FakeEvent(1, 1, "2/14", D0),
+        FakeEvent(2, 1, "$5", D0 + timedelta(days=7)),
+        FakeEvent(3, 1, "7/8 - 9", D0 + timedelta(days=14)),
+    ]
+    assert find_recurring_event_ids(events) == {}
+
+
+def test_unnamed_events_do_not_drag_in_named_ones():
+    """The empty-key group must stay separate from a real series at the same venue."""
+    events = [FakeEvent(i, 1, "", d) for i, d in enumerate(_weekly(3))]
+    events += [FakeEvent(10 + i, 1, "Tuesday Karaoke", d)
+               for i, d in enumerate(_weekly(3, start=D0 + timedelta(days=3)))]
+
+    recurring = find_recurring_event_ids(events)
+
+    assert set(recurring) == {10, 11, 12}
+
+
 # --- classify_batch: signal priority ---
 
 def test_recurrence_overrides_a_keyword_miss():
@@ -327,6 +414,8 @@ def test_exempt_venue_still_respects_per_event_override():
 def test_criteria_summary_shape():
     summary = criteria_summary()
     assert summary["recurrence_threshold"] == 3
+    assert summary["run_gap_days"] == RUN_GAP_DAYS
+    assert "occasion" in summary["recurrence_rule"]
     assert "karaoke" in summary["keywords"]
     assert "listening" in summary["party_themes"]
     assert "allowlist" in summary["party_rule"]  # explains why "party" isn't matched bare

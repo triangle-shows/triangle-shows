@@ -11,10 +11,12 @@ the caller, so nothing here can clobber a manual decision. Pure Python — no DB
 network access — so it is cheap to run and trivial to unit-test.
 
 Detection criteria, in priority order (highest wins):
-  1. Recurrence — a name that repeats on >= RECURRENCE_THRESHOLD future dates at
-     the same venue is treated as a recurring series (weekly karaoke, trivia, DJ
+  1. Recurrence — a name that repeats on >= RECURRENCE_THRESHOLD separate occasions
+     at the same venue is treated as a recurring series (weekly karaoke, trivia, DJ
      nights, etc.) and flagged non-live. This is the strongest signal per the
-     product decision, so it wins over keywords and genre.
+     product decision, so it wins over keywords and genre. Dates within
+     RUN_GAP_DAYS of each other count as one occasion, so a multi-night residency
+     stays live music instead of reading as a series.
   2. Keywords — the event name matches a known non-music keyword, OR a
      "<word> night" phrase (any word except days-of-week / NIGHT_EXCEPTIONS, so
      "Emo Night" and "Hyperpop Night" match but "Saturday Night" does not), OR a
@@ -37,9 +39,21 @@ from typing import Iterable, Optional
 
 # --- Tunable criteria ---
 
-# An event whose (venue, name) repeats on at least this many distinct future
-# dates is treated as a recurring, non-live series.
+# An event whose (venue, name) repeats on at least this many separate occasions at
+# the same venue is treated as a recurring, non-live series.
 RECURRENCE_THRESHOLD = 3
+
+# Dates within this many days of each other count as ONE occasion, not several.
+#
+# Without this, recurrence cannot tell a weekly karaoke night from a band booked for
+# a three-night run — both produce three distinct dates at one venue. A residency is
+# exactly what someone opens the calendar to find, so counting raw dates hid the
+# site's best listings. Grouping nearby dates collapses a run to a single occasion
+# while leaving a weekly series at one occasion per week.
+#
+# 2 days keeps a Fri/Sat/Sun run together, and a Fri/Sun booking with Saturday off,
+# while still splitting anything on a weekly-or-sparser cadence.
+RUN_GAP_DAYS = 2
 
 # How far into the past reclassification and admin moderation reach. The calendar can
 # be scrolled back into recent past dates, and those events carry is_live_music too, so
@@ -181,6 +195,23 @@ def _normalize_for_grouping(name: str) -> str:
     return re.sub(r"[^a-z]", "", (name or "").lower())
 
 
+def _count_occasions(dates: Iterable[date], gap_days: int = RUN_GAP_DAYS) -> int:
+    """Collapse dates into separate occasions, merging any that form one run.
+
+    Sorts the distinct dates and starts a new occasion whenever the gap from the
+    previous date exceeds `gap_days`. A three-night residency returns 1; a weekly
+    series returns one per week. See RUN_GAP_DAYS for why this matters.
+    """
+    ordered = sorted(set(dates))
+    if not ordered:
+        return 0
+    occasions = 1
+    for previous, current in zip(ordered, ordered[1:]):
+        if (current - previous).days > gap_days:
+            occasions += 1
+    return occasions
+
+
 def _match_non_music_genre(genre: Optional[str], subgenre: Optional[str]) -> Optional[str]:
     """Return the matched non-music genre token, or None."""
     haystack = " ".join(filter(None, [genre, subgenre])).lower()
@@ -245,8 +276,13 @@ def find_recurring_event_ids(
     """Identify events that belong to a recurring series.
 
     events: iterable of objects with `id`, `venue_id`, `name`, and `date`.
-    Returns {event_id: occurrence_count} for every event whose (venue, name) key
-    appears on at least `threshold` distinct dates.
+    Returns {event_id: date_count} for every event whose (venue, name) key recurs on
+    at least `threshold` separate occasions.
+
+    The threshold is applied to occasions, not raw dates — consecutive dates are one
+    run, not a series (see RUN_GAP_DAYS). The returned count is still the number of
+    distinct dates, because that is what the admin UI and classification_reason
+    report and it is the more useful number to read.
     """
     dates_by_key: dict = defaultdict(set)
     ids_by_key: dict = defaultdict(list)
@@ -257,9 +293,21 @@ def find_recurring_event_ids(
 
     recurring: dict = {}
     for key, dates in dates_by_key.items():
-        if len(dates) >= threshold:
-            for event_id in ids_by_key[key]:
-                recurring[event_id] = len(dates)
+        _venue_id, normalized_name = key
+
+        # An empty key means the name normalized away entirely — an event with no
+        # name, or one named only in digits and punctuation ("2/14", "$5"). Those are
+        # unrelated events sharing an empty key, not a series, and a broken scraper
+        # emits them in bunches: three at one venue was enough to flag all three as
+        # recurring and hide them. See the malformed Squarespace records in #35.
+        if not normalized_name:
+            continue
+
+        if _count_occasions(dates) < threshold:
+            continue
+
+        for event_id in ids_by_key[key]:
+            recurring[event_id] = len(dates)
     return recurring
 
 
@@ -346,6 +394,12 @@ def criteria_summary() -> dict:
     """
     return {
         "recurrence_threshold": RECURRENCE_THRESHOLD,
+        "run_gap_days": RUN_GAP_DAYS,
+        "recurrence_rule": (
+            f"a name repeating on {RECURRENCE_THRESHOLD}+ separate occasions at one "
+            f"venue is a series; dates within {RUN_GAP_DAYS} days of each other count "
+            "as one occasion, so a multi-night run stays live music"
+        ),
         "always_live_venues": sorted(ALWAYS_LIVE_VENUE_SLUGS),
         "keywords": list(NON_MUSIC_KEYWORDS),
         "night_rule": "'<word> night' is non-live unless <word> is a day of the "
