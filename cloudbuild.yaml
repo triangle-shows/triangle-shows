@@ -84,6 +84,20 @@ steps:
       - --min-instances=0
       - --max-instances=2
       - --timeout=300
+      # Origin gates (backend/app/tokens.py) are OFF until these env vars are set, and
+      # the boot log says which are live on every start. None of these values is a
+      # secret — a team domain, an application id, and a service-account email — so they
+      # belong here rather than in Secret Manager.
+      #
+      # Turn them on by extending the line below in place. gcloud rejects
+      # --set-env-vars alongside --update-env-vars, so append rather than adding a line:
+      #
+      #   - --set-env-vars=APP_ENV=production,ENABLE_SCHEDULER=false,LOG_LEVEL=INFO,CF_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com,CF_ACCESS_AUD=<aud-tag>,SCRAPE_ALLOWED_SERVICE_ACCOUNTS=<scheduler-sa-email>,SCRAPE_OIDC_AUDIENCE=<audience-on-the-scheduler-job>
+      #
+      # Enable the scrape gate first: its token already arrives, so it can be verified
+      # with nothing else in place. The /admin gate needs a Cloudflare Access application
+      # to exist first, or /admin becomes unreachable — which is safe (it fails closed)
+      # but not useful.
       - --set-env-vars=APP_ENV=production,ENABLE_SCHEDULER=false,LOG_LEVEL=INFO
       - --update-secrets=DATABASE_URL=triangle-shows-db-url:latest
       - --update-secrets=TICKETMASTER_API_KEY=triangle-shows-tm-api-key:latest
