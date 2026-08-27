@@ -3,8 +3,8 @@
 ## Branch structure
 
 ```
-prod                    ← what's actually deployed; protected
-  └── main              ← default branch; where work integrates; protected
+prod                    ← what's actually deployed; PR-gated
+  └── main              ← default branch; where work integrates
         ├── feature/xyz
         ├── feature/abc
         └── fix/xyz
@@ -12,7 +12,7 @@ prod                    ← what's actually deployed; protected
 
 - `main` is the default branch and where all work lands. Merging into it does **not** deploy.
 - `prod` is the only branch that deploys. It receives merges from `main` and nothing else — never commit to it directly.
-- Feature and fix branches are created from `main`, worked on, then merged back into `main` via PR.
+- Feature and fix branches are created from `main`, worked on, then merged back into `main` — via PR for anything non-trivial.
 - Shipping is a separate, deliberate step: open a PR from `main` → `prod` when you're ready for the changes to go live.
 
 This split exists so that merging work and deploying work are two different decisions. You can merge a dozen PRs into `main` over a week and ship them as one deploy.
@@ -30,25 +30,26 @@ An urgent production fix needs no special prefix — it's a `fix/` branch that g
 
 ## Branch protection
 
-Both long-lived branches are protected by repository rulesets (GitHub Settings → Rules → Rulesets):
+Both long-lived branches are protected by repository rulesets (GitHub Settings → Rules → Rulesets), but not identically — `prod` is gated, `main` is not:
 
-| Rule | Effect |
-|------|--------|
-| Require a pull request | No direct pushes — every change arrives through a PR |
-| Restrict deletions | The branch itself cannot be deleted |
-| Block force pushes | History can only move forward; nothing already on the branch can be rewritten or dropped |
+| Rule | `main` | `prod` | Effect |
+|------|:------:|:------:|--------|
+| Block force pushes | ✅ | ✅ | History can only move forward; nothing already on the branch can be rewritten or dropped |
+| Restrict deletions | ✅ | ✅ | The branch itself cannot be deleted |
+| Require a pull request | — | ✅ | No direct pushes; every change arrives through a PR |
+
+That asymmetry is deliberate. `main` stays quick to work on — you can commit a small fix straight to it — while everything that reaches the live site has to pass through a promotion PR.
 
 "Restrict deletions" protects the *branch*, not files — a PR that deletes files merges normally.
 
-Repository admins can bypass these rules. Treat that as an escape hatch, not the workflow.
-
-The `main` ruleset targets the default branch rather than `main` by name. Since `main` is the default, that resolves correctly today. If the default branch is ever changed, repoint the ruleset to `refs/heads/main` first, or `main` will silently lose its protection.
+Neither ruleset has bypass actors, so the `prod` PR requirement applies to everyone, repository admins included. There is no direct path to `prod`.
 
 Automatic head-branch deletion is on, so a feature branch is removed from GitHub once its PR merges. `main` is exempt because its ruleset restricts deletions — it survives being merged into `prod`. Your local copies survive regardless; clean up with `git fetch --prune` and `git branch -d <branch>`.
 
 ## Pull requests
 
-- **Every change goes through a PR**, including the `main` → `prod` promotion.
+- **Open a PR for any non-trivial change** — new features, significant refactors, anything worth a second look. Small fixes can be committed straight to `main`.
+- **The `main` → `prod` promotion is always a PR.** The ruleset requires it, and it's the moment worth pausing on.
 - Use **Draft PRs** for in-flight work you want tracked but not yet merged.
 - Use `closes #12` in PR descriptions to auto-close linked issues when the PR merges.
 - The PR description is where you record *why* the change was made — commit messages cover *what*.
