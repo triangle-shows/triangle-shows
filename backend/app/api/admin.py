@@ -106,7 +106,16 @@ async def login_page() -> HTMLResponse:
 async def login_submit(body: LoginBody):
     # compare_digest guards against timing attacks; also fails closed when no
     # password is configured (compare against "" would otherwise accept "").
-    if _admin_enabled() and secrets.compare_digest(body.password, settings.ADMIN_PASSWORD):
+    #
+    # Both operands are encoded to bytes because compare_digest rejects a str containing
+    # any non-ASCII character, raising TypeError rather than returning False. Passed
+    # strings directly, a password with an accented character turned a wrong-password
+    # attempt into a 500 instead of a clean 401 — and, since the message differs, told the
+    # caller something about the configured password. UTF-8 on both sides compares the
+    # same bytes the client sent.
+    if _admin_enabled() and secrets.compare_digest(
+        body.password.encode("utf-8"), settings.ADMIN_PASSWORD.encode("utf-8")
+    ):
         response = JSONResponse({"ok": True})
         _issue_cookie(response)
         return response

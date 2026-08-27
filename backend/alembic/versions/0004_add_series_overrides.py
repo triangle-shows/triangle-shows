@@ -27,7 +27,11 @@ def upgrade() -> None:
         sa.Column('note', sa.String(500), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('updated_at', sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(['venue_id'], ['venues.id']),
+        # ON DELETE CASCADE so retiring a venue cannot be blocked by its series rules.
+        # Edited into this migration rather than added by a later one: 0003-0005 have never
+        # been applied anywhere (both main and prod sit at 0002), so there is no deployed
+        # constraint to alter.
+        sa.ForeignKeyConstraint(['venue_id'], ['venues.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('venue_id', 'normalized_name', name='uq_series_override_key'),
     )

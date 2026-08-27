@@ -56,6 +56,14 @@ class Venue(Base):
 
     events: Mapped[list["Event"]] = relationship(back_populates="venue", cascade="all, delete-orphan")
     scrape_logs: Mapped[list["ScrapeLog"]] = relationship(back_populates="venue", cascade="all, delete-orphan")
+    # Retiring a venue must not be blocked by its series rules. seed_venues() deletes
+    # venues listed in REMOVED_SLUGS on every startup via session.delete(), which cascades
+    # only through relationships SQLAlchemy knows about — so without this, the first
+    # retirement of a venue holding a series override raises ForeignKeyViolation inside the
+    # lifespan handler and the container never becomes healthy.
+    series_overrides: Mapped[list["SeriesOverride"]] = relationship(
+        back_populates="venue", cascade="all, delete-orphan"
+    )
 
 
 class Event(Base):
@@ -140,13 +148,20 @@ class SeriesOverride(Base):
     __tablename__ = "series_overrides"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"), index=True)
+    # ondelete="CASCADE" as well as the ORM relationship on Venue: the relationship covers
+    # session.delete(), the database constraint covers everything else (a manual DELETE, a
+    # future bulk query that bypasses the ORM's cascade).
+    venue_id: Mapped[int] = mapped_column(
+        ForeignKey("venues.id", ondelete="CASCADE"), index=True
+    )
     normalized_name: Mapped[str] = mapped_column(String(200))  # matches app.classifier.normalize_series_name(event.name)
     display_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # a readable example name for the admin UI
     is_live_music: Mapped[bool] = mapped_column(Boolean)  # the value forced onto every event in the series
     note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # optional admin note explaining the decision
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    venue: Mapped["Venue"] = relationship(back_populates="series_overrides")
 
     # One rule per (venue, series name); the admin endpoint upserts on this key.
     __table_args__ = (
