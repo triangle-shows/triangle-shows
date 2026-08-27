@@ -10,6 +10,7 @@ admin is disabled (fails closed). Must be registered before the "/" static mount
 main.py so these routes take priority over the catch-all.
 Requires: async PostgreSQL session, app.classifier, app.scrapers.manager, itsdangerous.
 """
+import logging
 import secrets
 from datetime import date, datetime
 from typing import Optional
@@ -28,6 +29,9 @@ from app.models import Event, Venue, SeriesOverride
 from app.classifier import normalize_series_name, criteria_summary, reclassify_floor
 from app.scrapers.manager import ScrapeManager
 from app.admin_ui import LOGIN_HTML, ADMIN_HTML
+from app import tokens
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -43,9 +47,43 @@ _signing_key = settings.SESSION_SECRET or secrets.token_urlsafe(32)
 _serializer = URLSafeTimedSerializer(_signing_key, salt="ts-admin-session")
 
 
-def _admin_enabled() -> bool:
-    """Admin is reachable only when a password is configured."""
+def _password_login_enabled() -> bool:
+    """Whether the shared-password login is usable at all.
+
+    Kept separate from _admin_enabled() on purpose. This is the check that stops
+    compare_digest comparing a guess against "" — which would accept an empty password —
+    so it must stay pinned to ADMIN_PASSWORD alone and must not widen when some other
+    authentication method becomes available.
+    """
     return bool(settings.ADMIN_PASSWORD)
+
+
+def _admin_enabled() -> bool:
+    """Whether /admin can authenticate anyone at all — by either method.
+
+    Cloudflare Access counts. When the origin gate is enforcing, every request that
+    reaches a handler has already presented a token Cloudflare signed for a person on the
+    Access policy, which is strictly stronger identification than a password shared by
+    everyone. So a password is no longer required for the admin surface to exist.
+    """
+    return _password_login_enabled() or tokens.cloudflare_access_configured()
+
+
+def _access_identity(request: Request) -> Optional[str]:
+    """The Cloudflare-verified person behind this request, if there is one.
+
+    Set by the enforce_admin_access middleware in app.main, which has already checked the
+    token's signature, expiry, audience and issuer. Absent when the gate is not
+    configured — in which case there is no verified identity and the cookie path applies.
+
+    Trusting this is only sound because the gate rejects tokenless requests at the origin.
+    If /admin were reachable without a token, treating its absence as "fall back to the
+    cookie" would be fine, but treating its presence as proof would not be — the header
+    can be set by any client. The middleware never sets this from an unverified header.
+    """
+    if not tokens.cloudflare_access_configured():
+        return None
+    return getattr(request.state, "access_email", None)
 
 
 def _issue_cookie(response) -> None:
@@ -72,11 +110,19 @@ def _is_authenticated(request: Request) -> bool:
         return False
 
 
-async def require_admin(request: Request) -> bool:
-    """Dependency guarding /admin/api/* — raises 401 for the frontend to redirect on."""
-    if not _is_authenticated(request):
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return True
+async def require_admin(request: Request) -> str:
+    """Dependency guarding /admin/api/* — raises 401 for the frontend to redirect on.
+
+    Returns who is acting: their email when Cloudflare Access identified them, otherwise
+    "admin" for a password session, which carries no identity. Handlers can take it as a
+    parameter to attribute an action to a person.
+    """
+    identity = _access_identity(request)
+    if identity:
+        return identity
+    if _is_authenticated(request):
+        return "admin"
+    raise HTTPException(status_code=401, detail="Not authenticated")
 
 
 # --- Request bodies ---
@@ -98,7 +144,20 @@ class SeriesBody(BaseModel):
 # --- Auth + page routes ---
 
 @router.get("/login", response_class=HTMLResponse)
-async def login_page() -> HTMLResponse:
+async def login_page(request: Request):
+    # Already identified by Cloudflare Access — there is nothing to log in to, so don't
+    # show a password box that would only reject them. A visitor who reached this page at
+    # all has passed the origin gate.
+    if _access_identity(request):
+        return RedirectResponse("/admin", status_code=303)
+    if not _password_login_enabled():
+        # No password configured and no Access identity: nothing can authenticate here.
+        # Say so rather than presenting a form that cannot succeed.
+        return HTMLResponse(
+            "<h1>Admin login is disabled</h1><p>No password is configured, and this "
+            "request did not arrive through Cloudflare Access.</p>",
+            status_code=403,
+        )
     return HTMLResponse(LOGIN_HTML)
 
 
@@ -113,7 +172,12 @@ async def login_submit(body: LoginBody):
     # attempt into a 500 instead of a clean 401 — and, since the message differs, told the
     # caller something about the configured password. UTF-8 on both sides compares the
     # same bytes the client sent.
-    if _admin_enabled() and secrets.compare_digest(
+    #
+    # Gated on _password_login_enabled(), not _admin_enabled(): the latter is now true
+    # whenever Cloudflare Access is configured, and with no ADMIN_PASSWORD set that would
+    # let compare_digest("", "") succeed and hand out a session to anyone posting an empty
+    # password. The two checks exist separately for exactly this reason.
+    if _password_login_enabled() and secrets.compare_digest(
         body.password.encode("utf-8"), settings.ADMIN_PASSWORD.encode("utf-8")
     ):
         response = JSONResponse({"ok": True})
@@ -124,13 +188,31 @@ async def login_submit(body: LoginBody):
 
 @router.get("/logout")
 async def logout() -> RedirectResponse:
-    response = RedirectResponse("/admin/login", status_code=303)
+    """Log out of whichever session is actually in force.
+
+    Deleting the app's cookie does nothing to a Cloudflare Access session, so with the
+    gate enforcing, the old behavior sent you to /admin/login, which recognised your still
+    valid Access identity and bounced you straight back to the dashboard — a logout button
+    that visibly did nothing. Cloudflare's own logout endpoint is what ends that session.
+    """
+    target = "/admin/login"
+    if tokens.cloudflare_access_configured():
+        team_domain = settings.CF_ACCESS_TEAM_DOMAIN.strip().rstrip("/")
+        if "://" in team_domain:
+            team_domain = team_domain.split("://", 1)[1]
+        target = f"https://{team_domain}/cdn-cgi/access/logout"
+
+    response = RedirectResponse(target, status_code=303)
     response.delete_cookie(COOKIE_NAME, path="/admin")
     return response
 
 
 @router.get("", response_class=HTMLResponse)
 async def admin_page(request: Request):
+    identity = _access_identity(request)
+    if identity:
+        logger.info(f"[admin] dashboard opened by {identity}")
+        return HTMLResponse(ADMIN_HTML)
     if not _is_authenticated(request):
         return RedirectResponse("/admin/login", status_code=303)
     return HTMLResponse(ADMIN_HTML)

@@ -1,7 +1,7 @@
 # Architecture
 
 How a request reaches the app, and how a commit becomes a deploy. Values here were verified
-against the live infrastructure on 2026-08-26.
+against the live infrastructure on 2026-08-27.
 
 For the branch and release workflow see [CONTRIBUTING.md](../.github/CONTRIBUTING.md).
 For running the app on your own machine see [SELF-HOSTING.md](SELF-HOSTING.md).
@@ -153,21 +153,77 @@ commit is live. That's what [`tools/wait_for_deploy.py`](../tools/wait_for_deplo
 | request timeout | 300s | Scrape requests can be slow |
 | `APP_ENV` | `production` | |
 | `ENABLE_SCHEDULER` | `false` | Scraping is driven externally by Cloud Scheduler, not in-process |
+| `ENABLE_STARTUP_SCRAPE` | `false` | See below — a detached task cannot work under this service's CPU allocation |
 | `LOG_LEVEL` | `INFO` | |
 | `DATABASE_URL` | secret `triangle-shows-db-url` | |
 | `TICKETMASTER_API_KEY` | secret `triangle-shows-tm-api-key` | |
+| `SCRAPE_ALLOWED_SERVICE_ACCOUNTS` | the scheduler's service account | Gates `POST /api/scrape` — see Origin gates |
+| `SCRAPE_OIDC_AUDIENCE` | `https://triangle-shows.net/api/scrape` | The audience configured on the scheduler job |
+| `CF_ACCESS_TEAM_DOMAIN` | the Cloudflare Zero Trust team domain | Gates `/admin/*` |
+| `CF_ACCESS_AUD` | the Access application's AUD tag | An identifier, not a credential — see Origin gates |
 
-The admin subsite (`/admin`) is **disabled**. It requires `ADMIN_PASSWORD` and `SESSION_SECRET`,
-neither of which exists in Secret Manager, and the corresponding lines in `cloudbuild.yaml` are
-commented out. It fails closed, so the rest of the site is unaffected. Create both secrets
-*before* uncommenting, or the deploy fails on a missing secret.
+**No admin secrets exist, and none are needed.** `ADMIN_PASSWORD` and `SESSION_SECRET` are
+absent from Secret Manager and their `cloudbuild.yaml` lines are commented out deliberately:
+`/admin` authenticates from the Cloudflare Access identity instead, so there is no shared
+password to distribute or rotate, and with no password login there is no cookie to sign.
+Access to the admin surface is granted by adding someone to the `triangle-shows` GitHub
+organization and revoked by removing them.
+
+**Why the on-boot scrape is off.** It ran as a detached asyncio task, and this service sets no
+CPU-throttling override, so Cloud Run allocates CPU only while a request is in flight — the
+task was starved as soon as startup finished. On the 2026-08-27 release it deleted rows in
+dribs over five minutes as health checks briefly granted CPU, never reached the reclassify
+pass at the end, and emitted no stdout at all, so the live-music filter shipped classifying
+nothing with no logs to say so. Cloud Scheduler already calls `POST /api/scrape` every six
+hours inside a real request, which is where a scrape belongs.
+
+### Origin gates
+
+The service accepts unauthenticated requests — it has to, for the public site to work — so its
+`.run.app` hostnames reach the app directly, skipping Cloudflare and anything enforced there.
+A Cloudflare Access policy on `triangle-shows.net/admin` therefore protects only the Cloudflare
+path; on its own it leaves the origin open.
+
+`backend/app/tokens.py` closes that by making the application itself require proof that a
+request passed through a trusted issuer. Both issuers sign a short-lived token and publish the
+matching public keys, so verification is local arithmetic against cached keys:
+
+| Route | Issuer | Header |
+|---|---|---|
+| `/admin/*` | Cloudflare Access | `Cf-Access-Jwt-Assertion` |
+| `POST /api/scrape` | Google (Cloud Scheduler's OIDC token) | `Authorization: Bearer …` |
+
+Four checks on each: signature, expiry, audience, issuer. Both gates are inert until their env
+vars are set, and `log_enforcement_state()` states on every boot which are live — a control that
+silently does nothing when misconfigured is worse than an absent one, because it reads as
+protection.
+
+Verified in production: `GET https://<origin>/admin` and `POST https://<origin>/api/scrape` both
+return 403, while a signed-in request through Cloudflare reaches the app normally.
+
+Restricting Cloud Run ingress is *not* an alternative here. `internal-and-cloud-load-balancing`
+admits only Google's load balancer, and Cloudflare is not one — it reaches the origin over the
+public internet like any other client. Making that setting work would mean reintroducing the
+GCP HTTPS Load Balancer deleted during the Cloudflare migration, which is also why IAP is out.
 
 ## Scheduled scraping
 
 Cloud Scheduler job `triangle-shows-scrape` posts to `/api/scrape` on `0 */6 * * *` (UTC), using
-the project-number Cloud Run URL and OIDC authentication. This is why `ENABLE_SCHEDULER` is
-`false` in the container — the schedule lives outside the app, so a scaled-to-zero service still
-gets scraped, and two running instances don't scrape twice.
+the project-number Cloud Run URL and an OIDC token from a dedicated service account,
+`triangle-shows-scrape@…`, rather than the project's default compute identity. This is why
+`ENABLE_SCHEDULER` is `false` in the container — the schedule lives outside the app, so a
+scaled-to-zero service still gets scraped, and two running instances don't scrape twice.
+
+**The application verifies that token** (see Origin gates). Cloud Run cannot do it for us,
+because the service must accept unauthenticated requests for the public site to work, so the
+token arrives and is simply ignored unless the app checks it. The allowlisted service-account
+email is the substantive control; granting a second caller is a matter of adding its email to
+`SCRAPE_ALLOWED_SERVICE_ACCOUNTS`, which is configuration rather than code.
+
+Since this endpoint drives the whole dataset, note that a scrape also runs the reclassify pass
+and the reconcile that deletes listings a source has stopped carrying. Its response reports both
+the per-venue counts and the reclassify result, so a manual trigger says what it did without
+needing the logs.
 
 ## Data
 
