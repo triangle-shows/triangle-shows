@@ -351,7 +351,8 @@ def classification_updates(
     mapping — a series-level rule that overrides automatic classification for every
     event whose (venue, name) key matches.
     exempt_venue_ids: optional set of venue ids assumed to be entirely live music
-    (see ALWAYS_LIVE_VENUE_SLUGS, e.g. DPAC) — forced live, skipping auto/series.
+    (see ALWAYS_LIVE_VENUE_SLUGS, e.g. DPAC) — forced live unless a series override says
+    otherwise, so the exemption is a default rather than an absolute.
 
     Returns {event_id: (is_live_music, reason)} for every event EXCEPT those with
     is_manual_override=True, which are omitted so a re-scrape never overwrites a
@@ -359,8 +360,8 @@ def classification_updates(
 
     Precedence, most specific first:
       1. per-event manual override  -> omitted here (caller leaves the row untouched)
-      2. always-live venue exemption -> forced live music
-      3. series override            -> forces the series value
+      2. series override            -> forces the series value
+      3. always-live venue exemption -> forced live music
       4. automatic classification   -> recurrence / keyword / genre
     This is the pure decision function behind ScrapeManager.reclassify_all().
     """
@@ -373,14 +374,19 @@ def classification_updates(
     for ev in events:
         if getattr(ev, "is_manual_override", False):
             continue  # per-event override wins; leave the hand-set value in place
-        if ev.venue_id in exempt_venue_ids:
-            updates[ev.id] = (True, "venue: always live music")
-            continue
+
+        # Series override is consulted before the venue exemption, so the exemption acts
+        # as a default rather than as an absolute. The other order made an exempt venue's
+        # series impossible to mark non-live through the series UI, on every future
+        # instance, forever — and DPAC, the only exempt venue, hosts Broadway and comedy
+        # alongside music, which is exactly the case the series UI is for.
         key = (ev.venue_id, normalize_series_name(ev.name))
         if key in series_overrides:
             is_live, _note = series_overrides[key]
             label = "live music" if is_live else "non-live"
             updates[ev.id] = (is_live, f"series override: {label}")
+        elif ev.venue_id in exempt_venue_ids:
+            updates[ev.id] = (True, "venue: always live music")
         else:
             updates[ev.id] = classified[ev.id]
     return updates

@@ -385,16 +385,60 @@ def test_series_key_matches_dated_name_variants():
 
 # --- always-live venue exemption (e.g. DPAC) ---
 
-def test_exempt_venue_forced_live_over_auto_and_series():
-    # Venue 9 is exempt. Even a recurring, keyword-y name at that venue stays live;
-    # a series override on it is also ignored (venue is out of the filter pass).
+def test_exempt_venue_forced_live_over_automatic_classification():
+    # Venue 9 is exempt, so a recurring, keyword-y name there stays live music instead of
+    # being flagged as a series.
+    events = [FakeEvent(i, 9, "Karaoke Night", d) for i, d in enumerate(_weekly(4))]
+    updates = classification_updates(events, exempt_venue_ids={9})
+    for eid in range(4):
+        assert updates[eid] == (True, "venue: always live music")
+
+
+def test_series_override_beats_the_venue_exemption():
+    """Review item #6. This assertion is the reverse of what it was.
+
+    The exemption used to return before series overrides were consulted, which made an
+    exempt venue's series impossible to mark non-live through the series UI — on every
+    future instance, permanently. DPAC is the only exempt venue and it hosts Broadway and
+    comedy alongside music, so that is precisely the case the series UI exists for. The
+    exemption is now a default that a deliberate series decision can override.
+    """
     events = [FakeEvent(i, 9, "Karaoke Night", d) for i, d in enumerate(_weekly(4))]
     overrides = {_series_key(9, "Karaoke Night"): (False, None)}
+
     updates = classification_updates(
         events, series_overrides=overrides, exempt_venue_ids={9}
     )
+
     for eid in range(4):
-        assert updates[eid] == (True, "venue: always live music")
+        assert updates[eid] == (False, "series override: non-live")
+
+
+def test_a_series_override_can_also_keep_an_exempt_venues_series_live():
+    """The override wins in both directions — it is not a special case for hiding."""
+    events = [FakeEvent(i, 9, "Karaoke Night", d) for i, d in enumerate(_weekly(4))]
+    overrides = {_series_key(9, "Karaoke Night"): (True, None)}
+
+    updates = classification_updates(
+        events, series_overrides=overrides, exempt_venue_ids={9}
+    )
+
+    for eid in range(4):
+        assert updates[eid] == (True, "series override: live music")
+
+
+def test_an_unrelated_series_at_an_exempt_venue_still_gets_the_exemption():
+    """Only the overridden series changes; the rest of the venue keeps its default."""
+    events = [FakeEvent(i, 9, "Karaoke Night", d) for i, d in enumerate(_weekly(4))]
+    events += [FakeEvent(100 + i, 9, "Trivia Night", d) for i, d in enumerate(_weekly(4))]
+    overrides = {_series_key(9, "Karaoke Night"): (False, None)}
+
+    updates = classification_updates(
+        events, series_overrides=overrides, exempt_venue_ids={9}
+    )
+
+    assert updates[0] == (False, "series override: non-live")
+    assert updates[100] == (True, "venue: always live music")
 
 
 def test_exempt_venue_still_respects_per_event_override():
