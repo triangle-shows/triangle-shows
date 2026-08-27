@@ -77,9 +77,10 @@ async def lifespan(app: FastAPI):
     await seed_venues()
     logger.info("Venues seeded")
 
-    # Kick off a scrape immediately in the background
-    asyncio.create_task(_startup_scrape())
-    logger.info("Startup scrape scheduled")
+    # Kick off a scrape immediately in the background (disabled in CI via ENABLE_STARTUP_SCRAPE=false)
+    if settings.ENABLE_STARTUP_SCRAPE:
+        asyncio.create_task(_startup_scrape())
+        logger.info("Startup scrape scheduled")
 
     # Start scheduler if enabled
     if settings.ENABLE_SCHEDULER:
