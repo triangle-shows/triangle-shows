@@ -26,3 +26,9 @@ _context-history/
 .claude/
 .claude*
 CLAUDE.md
+
+# Claude-managed session files. These moved from a `_` prefix to a `.` prefix,
+# which `_*.md` above no longer covers.
+.SESSION-CONTEXT.md
+.context-history/
+.todo
