@@ -44,7 +44,17 @@ That asymmetry is deliberate. `main` stays quick to work on — you can commit a
 
 Neither ruleset has bypass actors, so the `prod` PR requirement applies to everyone, repository admins included. There is no direct path to `prod`.
 
-Automatic head-branch deletion is on, so a feature branch is removed from GitHub once its PR merges. `main` is exempt because its ruleset restricts deletions — it survives being merged into `prod`. Your local copies survive regardless; clean up with `git fetch --prune` and `git branch -d <branch>`.
+Branches are **not** removed automatically when a PR merges — auto-delete is off, so cleanup is a deliberate step:
+
+```bash
+git push origin --delete <branch>   # remove it from GitHub (takes several branch names at once)
+git fetch --prune                   # drop the stale origin/… references
+git branch -d <branch>              # remove your local copy
+```
+
+Use lowercase `-d`, which refuses to delete a branch with unmerged commits; `-D` forces past that check. To see what's safe to remove, `git branch -r --merged origin/main` lists remote branches already folded into `main` — but check for open PRs first, since a branch can be merged and still have follow-up work attached.
+
+`main` and `prod` cannot be deleted at all: both rulesets restrict deletions.
 
 ## Pull requests
 
