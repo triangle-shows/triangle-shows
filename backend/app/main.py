@@ -114,10 +114,30 @@ app = FastAPI(
 )
 
 # CORS
+#
+# allow_credentials is False, and that single flag is what makes the "*" safe. The exact
+# mechanics, measured rather than assumed (see tests/test_cors.py):
+#
+#   Starlette replaces the "*" with the caller's own Origin whenever the request carries a
+#   Cookie header. That happens either way and is not the problem. The problem was pairing
+#   it with allow_credentials=True, which adds Access-Control-Allow-Credentials: true —
+#   the header a browser requires before it will hand a credentialed cross-origin response
+#   back to the page that asked for it. Origin echo plus that header is what let a hostile
+#   page read authenticated responses, leaving the admin cookie's samesite="lax" as the
+#   only control. Without the header the echo is inert: the browser discards the response.
+#
+# Nothing here needs cross-origin credentials, or cross-origin requests of any kind.
+# frontend/js/config.js sets API_BASE to window.location.origin and the admin UI fetches
+# relative paths, so every in-app request is same-origin, where CORS does not apply.
+#
+# Keeping "*" rather than an allowlist is deliberate: the read API is public, so leaving it
+# usable from any page costs nothing once credentials are off. Narrowing allow_origins to
+# the real site origins would stop third parties consuming it from a browser — a product
+# decision, not a security one.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
