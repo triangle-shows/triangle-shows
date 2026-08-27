@@ -8,6 +8,27 @@ overrides (including keeping a recurring series as live music).
 
 Run from the backend/ directory:  python -m pytest tests/test_classifier.py
 The classifier is pure stdlib, so no DB or fixtures are needed.
+
+NOT COVERED — known gaps, all requiring a database session:
+
+  * ScrapeManager.reclassify_all() clearing Event.approved_at when a verdict
+    changes. This is the subtlest contract in the feature: the condition checks
+    `is_live_music` specifically, NOT the broader `changed` flag used on the
+    surrounding lines, because a reworded classification_reason is not a
+    different answer. "Simplifying" it to match its neighbours would silently
+    empty the admin review queue on every scrape — no error, just an
+    inexplicably empty page. Verified by hand against real data (22 approvals
+    cleared on a flip, 22 preserved across a no-op reclassify) but nothing here
+    would catch a regression.
+  * The series-scoped approve/unapprove endpoints, which group by
+    normalize_series_name and must match what the dashboard shows collapsed.
+  * The admin list endpoint's honest-count fields — total, approved_hidden and
+    series_size — each of which exists specifically to stop the UI understating
+    what it is showing or what a series action affects.
+
+Closing these needs pytest-asyncio (not currently in requirements-dev.txt) and a
+session fixture against a throwaway database. The CI workflow already stands up a
+Postgres service container, so that is the natural place to hang it.
 """
 
 import sys
