@@ -27,7 +27,7 @@ _context-history/
 .claude*
 CLAUDE.md
 
-# Claude-managed session files. `_*.md` above covers _SESSION-CONTEXT.md and the
-# archived copies inside _context-history/, but not the directory itself or _todo.
+# Claude-managed session files. `_*.md` above covers _SESSION-CONTEXT.md, _todo.md,
+# and the archived copies inside _context-history/ — it does not match the directory
+# itself, hence this line.
 _context-history/
-_todo
