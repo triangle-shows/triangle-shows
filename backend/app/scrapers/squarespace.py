@@ -60,6 +60,37 @@ class SquarespaceScraper(BaseScraper):
         logger.info(f"[Squarespace] Found {len(events)} events for {self.venue_slug}")
         return events
 
+    def _extract_description(self, item: dict) -> str:
+        """Pull a plain-text description out of a Squarespace event body.
+
+        Squarespace nests the post body in a `div.sqs-html-content` block whose first
+        child repeats the event title, so the walk starts at the second child and takes
+        the text of each remaining one — the raw HTML must not reach the database (#17).
+
+        Returns '' when there is nothing to read. A venue that leaves an event body
+        empty gets layout scaffolding with no `sqs-html-content` block at all, and an
+        empty description is never a reason to discard the event (#35).
+        """
+        raw = item.get("excerpt") or item.get("body") or ""
+        if not raw:
+            return ''
+
+        try:
+            body = BeautifulSoup(raw, "lxml").select_one("div.sqs-html-content")
+            if body is None:
+                return ''
+            # select_one rather than select()[0]: an absent block returns None instead of
+            # raising IndexError, which is what used to take the whole event down.
+            return ''.join(child.text + "\r\n" for child in list(body.contents)[1:])
+        except Exception as e:
+            # Description is optional metadata. Losing it must never lose the event, so
+            # this stays outside the caller's try block for the required fields.
+            logger.warning(
+                f"[Squarespace] {self.venue_slug}: could not read description for "
+                f"{item.get('title', '?')!r}: {e}"
+            )
+            return ''
+
     def _parse_event(self, item: dict) -> Optional[ScrapedEvent]:
         """Parse a single Squarespace event dict into a ScrapedEvent, returning None on failure."""
         try:
@@ -90,13 +121,7 @@ class SquarespaceScraper(BaseScraper):
             # End date (usually same day)
             end_ts = item.get("endDate")
 
-            # Extract body/description — fall back to raw body if no excerpt
-            soup = BeautifulSoup(item.get("excerpt", "") or item.get("body", ""), "lxml")
-            description = ''
-            html_content = soup.select("div.sqs-html-content")
-            # start at 1 bc [0] is just the title again
-            for index in range(1, len(html_content[0].contents)):
-                description += html_content[0].contents[index].text + "\r\n"
+            description = self._extract_description(item)
             # Image
             image_url = None
             if item.get("assetUrl"):
@@ -147,5 +172,10 @@ class SquarespaceScraper(BaseScraper):
                 source_url=source_url,
             )
         except Exception as e:
-            logger.warning(f"[Squarespace] Failed to parse event: {e}")
+            # Name the venue and the event: the previous message identified neither,
+            # which is why four silently dropped Boom Club events went unnoticed.
+            logger.warning(
+                f"[Squarespace] {self.venue_slug}: failed to parse "
+                f"{item.get('title', '?')!r}: {e}"
+            )
             return None
