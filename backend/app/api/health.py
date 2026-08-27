@@ -38,9 +38,14 @@ router = APIRouter(prefix="/api/health", tags=["health"])
 
 # --- Endpoint ---
 
-@router.get("", response_model=HealthResponse)
+@router.api_route("", methods=["GET", "HEAD"], response_model=HealthResponse)
 async def health_check(response: Response, session: AsyncSession = Depends(get_session)):
     """Health check with event count and last scrape info.
+
+    HEAD is accepted as well as GET because UptimeRobot sends HEAD, and a GET-only route
+    answers that with 404 — so the uptime monitor was recording a failure on every check
+    against a perfectly healthy service. Starlette discards the body for a HEAD request,
+    so the status code still reflects the staleness logic below.
 
     Reports 503 with status="stale" when the most recent successful scrape is older
     than STALE_AFTER. Freshness is only enforced in production: CI and local runs

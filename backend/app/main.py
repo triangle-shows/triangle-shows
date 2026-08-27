@@ -59,10 +59,14 @@ async def _startup_scrape():
             results = await manager.scrape_all()
             for r in results:
                 logger.info(f"  [startup] {r}")
+            logger.info(f"Startup scrape: reclassify {manager.last_reclassify}")
         logger.info("Startup scrape: complete")
     except Exception as e:
-        # Non-fatal: the API should still serve cached data even if the scrape fails
-        logger.warning(f"Startup scrape failed: {e}")
+        # Non-fatal: the API should still serve cached data even if the scrape fails.
+        # ERROR with a traceback, not a bare WARNING: this handler swallows every failure
+        # in the scrape and reclassify path, so without the traceback the only signal that
+        # anything went wrong was a one-line message with no stack.
+        logger.error(f"Startup scrape failed: {e}", exc_info=True)
 
 
 # --- Lifespan (startup / shutdown) ---
@@ -242,7 +246,11 @@ async def trigger_scrape(
                 results = await manager.scrape_all(scraper_types=[scraper_type])
             else:
                 results = await manager.scrape_all()
-            return {"results": results}
+            # Report the reclassify pass alongside the per-venue results. A caller that
+            # triggers a scrape by hand can then see whether the classifier actually did
+            # anything, instead of having to find a log line — which is how a pass that
+            # classified nothing went unnoticed through a whole release.
+            return {"results": results, "reclassified": manager.last_reclassify}
     except Exception as e:
         logger.error(f"[trigger_scrape] Unhandled error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
