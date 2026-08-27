@@ -104,7 +104,19 @@ steps:
       # with nothing else in place. The /admin gate needs a Cloudflare Access application
       # to exist first, or /admin becomes unreachable — which is safe (it fails closed)
       # but not useful.
-      - --set-env-vars=APP_ENV=production,ENABLE_SCHEDULER=false,LOG_LEVEL=INFO
+      # ENABLE_STARTUP_SCRAPE=false because the on-boot scrape cannot work reliably here.
+      # It runs as a detached asyncio task, and this service has no CPU-throttling
+      # override, so Cloud Run allocates CPU only while a request is in flight. The task
+      # is therefore starved the moment startup finishes: on the 2026-08-27 release it
+      # deleted ~98 rows in dribs over five minutes as health checks briefly granted CPU,
+      # never reached the reclassify pass at the end, and emitted no stdout at all — so
+      # the live-music filter shipped classifying nothing, and there were no logs to say
+      # so. Cloud Scheduler already calls POST /api/scrape every 6 hours, inside a real
+      # request where CPU is allocated, which is where a scrape belongs.
+      #
+      # The alternative is --no-cpu-throttling, which keeps CPU allocated on idle
+      # instances and costs more for work the scheduler already does deterministically.
+      - --set-env-vars=APP_ENV=production,ENABLE_SCHEDULER=false,LOG_LEVEL=INFO,ENABLE_STARTUP_SCRAPE=false
       - --update-secrets=DATABASE_URL=triangle-shows-db-url:latest
       - --update-secrets=TICKETMASTER_API_KEY=triangle-shows-tm-api-key:latest
       # Admin subsite — uncomment BOTH lines only after creating the two secrets
