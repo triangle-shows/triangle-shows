@@ -901,6 +901,11 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   font-size: 0.8rem;
   color: var(--muted);
   line-height: 1.5;
+  /* Descriptions are plain text with blank lines between paragraphs (see
+     clean_html_text in the backend) — pre-line renders those breaks instead of
+     collapsing every description into one run-on line, while still collapsing
+     ordinary runs of spaces the way normal HTML text does. */
+  white-space: pre-line;
 }
 
 /* Badges */

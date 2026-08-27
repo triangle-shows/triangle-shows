@@ -17,6 +17,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.scrapers.base import BaseScraper, ScrapedEvent, BROWSER_HEADERS
+from app.scrapers.html_text import clean_html_text
 
 # --- Module-level setup ---
 logger = logging.getLogger(__name__)
@@ -206,10 +207,12 @@ class MECScraper(BaseScraper):
                 image = image.get("url", "")
             image_url = image or None
 
-            # Description
-            description = data.get("description", "") or None
-            if description:
-                description = description[:500]  # Truncate to avoid oversized records
+            # Description — MEC's JSON-LD field stores markup that has itself been through
+            # an HTML-entity pass, e.g. the literal text '&lt;p&gt;&lt;strong&gt;...'
+            # rather than an actual '<p>' tag, so it needs both an entity-decode and a
+            # tag-strip before it is readable (#13). Truncated after cleaning — truncating
+            # the raw markup first risks cutting mid-tag or mid-entity.
+            description = clean_html_text(data.get("description"), limit=500)
 
             # Status — derive from schema eventStatus or price
             event_status = data.get("eventStatus", "")

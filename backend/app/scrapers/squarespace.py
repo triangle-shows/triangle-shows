@@ -15,6 +15,7 @@ from bs4 import BeautifulSoup
 import httpx
 
 from app.scrapers.base import BaseScraper, ScrapedEvent, BROWSER_HEADERS
+from app.scrapers.html_text import clean_html_text
 
 # --- Module-level setup ---
 
@@ -73,28 +74,32 @@ class SquarespaceScraper(BaseScraper):
         """
         return data.get("items") or data.get("upcoming") or data.get("events") or []
 
-    def _extract_description(self, item: dict) -> str:
-        """Pull a plain-text description out of a Squarespace event body.
+    def _extract_description(self, item: dict, title: str) -> Optional[str]:
+        """Pull a human-readable description out of a Squarespace event.
 
-        Squarespace nests the post body in a `div.sqs-html-content` block whose first
-        child repeats the event title, so the walk starts at the second child and takes
-        the text of each remaining one — the raw HTML must not reach the database (#17).
+        Two shapes of source content, told apart by which field they came from:
 
-        Returns '' when there is nothing to read. A venue that leaves an event body
-        empty gets layout scaffolding with no `sqs-html-content` block at all, and an
-        empty description is never a reason to discard the event (#35).
+        - `excerpt`, when present, is a genuinely separate summary field: bare `<p>`
+          tags with real content, never a repeat of the title (confirmed against
+          Boom Club, which fills in excerpts but leaves `body` looking like an empty
+          Post Body block). Its paragraphs are kept as-is.
+        - `body` is the Post Body WYSIWYG editor's output, wrapped in Squarespace's
+          layout markup, and its first paragraph always repeats the event's own
+          title (confirmed against Neptune's Parlour) — dropped via
+          `drop_first_paragraph_if` rather than a positional skip, so it only ever
+          removes an actual title repeat and never a paragraph of real content that
+          happens to come first (#13, #17).
+
+        An event whose body is empty layout scaffolding with no readable text
+        returns None — that is never a reason to discard the event itself (#35).
         """
-        raw = item.get("excerpt") or item.get("body") or ""
-        if not raw:
-            return ''
-
         try:
-            body = BeautifulSoup(raw, "lxml").select_one("div.sqs-html-content")
-            if body is None:
-                return ''
-            # select_one rather than select()[0]: an absent block returns None instead of
-            # raising IndexError, which is what used to take the whole event down.
-            return ''.join(child.text + "\r\n" for child in list(body.contents)[1:])
+            excerpt = item.get("excerpt")
+            if excerpt:
+                # A real excerpt is never dropped for matching the title — only
+                # body's known title-repeat paragraph is.
+                return clean_html_text(excerpt)
+            return clean_html_text(item.get("body") or "", drop_first_paragraph_if=title)
         except Exception as e:
             # Description is optional metadata. Losing it must never lose the event, so
             # this stays outside the caller's try block for the required fields.
@@ -102,7 +107,7 @@ class SquarespaceScraper(BaseScraper):
                 f"[Squarespace] {self.venue_slug}: could not read description for "
                 f"{item.get('title', '?')!r}: {e}"
             )
-            return ''
+            return None
 
     def _parse_event(self, item: dict) -> Optional[ScrapedEvent]:
         """Parse a single Squarespace event dict into a ScrapedEvent, returning None on failure."""
@@ -134,7 +139,7 @@ class SquarespaceScraper(BaseScraper):
             # End date (usually same day)
             end_ts = item.get("endDate")
 
-            description = self._extract_description(item)
+            description = self._extract_description(item, title)
             # Image
             image_url = None
             if item.get("assetUrl"):
