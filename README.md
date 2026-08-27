@@ -80,7 +80,7 @@ frontend/
     favorites.js    # Heart, hide, restore, and export logic
 tools/              # Dev utilities (see below)
   mockups/          # Static HTML design explorations
-docs/               # Self-hosting guide
+docs/               # Architecture and self-hosting guides
 ```
 
 ### Developer tools
@@ -131,6 +131,8 @@ The authoritative source is [`backend/app/seed.py`](backend/app/seed.py) — eac
 | Frontend | Vanilla JS, FullCalendar v6 |
 | Scheduling | APScheduler (local) / Google Cloud Scheduler (production) |
 | Deployment | Google Cloud Run + Neon PostgreSQL + Cloudflare |
+
+See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for how a request reaches the app and how a commit becomes a deploy.
 
 ---
 
