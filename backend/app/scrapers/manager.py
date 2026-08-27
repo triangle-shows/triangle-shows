@@ -186,6 +186,11 @@ class ScrapeManager:
 
     def __init__(self, session: AsyncSession):
         self.session = session
+        # Result of the reclassify pass at the end of the last bulk scrape, so a caller
+        # can report what the classifier actually did. Without this, the only record was
+        # a log line — and Cloud Run drops stdout from work that runs outside a request,
+        # which is exactly how a reclassify pass silently doing nothing went unnoticed.
+        self.last_reclassify: Optional[dict] = None
 
     def _get_scraper(self, venue: Venue) -> Optional[BaseScraper]:
         """Instantiate the correct scraper for a venue."""
@@ -491,7 +496,7 @@ class ScrapeManager:
             results.append(r)
 
         # Recompute live-music flags across all upcoming events now that new data is in.
-        await self.reclassify_all()
+        self.last_reclassify = await self.reclassify_all()
 
         return results
 
@@ -511,6 +516,6 @@ class ScrapeManager:
             results.append(r)
 
         # Recompute live-music flags across all upcoming events now that new data is in.
-        await self.reclassify_all()
+        self.last_reclassify = await self.reclassify_all()
 
         return results
