@@ -175,8 +175,13 @@ purpose, so an empty `ScrapeLog` is expected there and must not fail the smoke t
 
 ### Uptime checking
 
-External monitoring runs on **[UptimeRobot](https://uptimerobot.com)** (free plan), checking
-`https://triangle-shows.net/api/health`.
+External monitoring runs on **[UptimeRobot](https://uptimerobot.com)** (free plan):
+
+| | |
+|---|---|
+| Target | `https://triangle-shows.net/api/health` |
+| Interval | every 15 minutes |
+| Alerts | email |
 
 **The monitor must target the public hostname, not the `.run.app` URL.** The Cloudflare Worker
 is the component whose failure takes the public site down while Cloud Run stays perfectly
@@ -184,9 +189,14 @@ healthy — a check against the origin would report all-clear through exactly th
 through the public hostname exercises DNS, Cloudflare, the Worker, Cloud Run, and Neon in one
 request.
 
-Two settings worth keeping as they are: a generous request timeout (~30s), because
-`min-instances=0` means the first request after an idle period pays a 2–3 second cold start;
-and alerting only after two consecutive failures, so a single blip doesn't page anyone.
+Keep the request timeout generous (~30s). With `min-instances=0` the first request after an
+idle period pays a 2–3 second cold start, and at a 15-minute interval most checks arrive after
+Cloud Run has already scaled down — so cold starts are the normal case here, not the exception.
+
+**Detection latency is roughly 15–30 minutes.** One missed check takes up to 15 minutes to
+occur, and if the monitor is set to alert only after two consecutive failures, that doubles.
+That's a deliberate tradeoff against false alarms rather than an oversight; shortening the
+interval is the lever if an outage needs noticing sooner.
 
 ## If something breaks
 
