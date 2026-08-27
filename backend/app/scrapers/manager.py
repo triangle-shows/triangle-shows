@@ -1,6 +1,11 @@
 """
-Scrape orchestrator: runs all venue scrapers, deduplicates results by hash, and
-upserts events + scrape logs into the database.
+Scrape orchestrator: runs all venue scrapers, matches each run against the events already
+stored for that venue, and upserts events + scrape logs into the database.
+
+Matching is the interesting part. Rows are identified by the venue's own event ID first
+and only then by a hash of the title, because titles get edited (support acts announced,
+events renamed) and a title-only identity turns every edit into a second listing. Rows the
+source has stopped listing are removed, subject to the safety valves below.
 
 Role: Triggered by POST /api/scrape (called by the scheduler every 6 hours or
 by Cloud Scheduler). Sits between the individual scrapers and the database —
@@ -11,8 +16,10 @@ session, and all scraper modules in app.scrapers/.
 
 # --- Imports ---
 import logging
-from datetime import datetime
-from typing import Optional
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from typing import Any, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +31,151 @@ from app.scrapers.base import BaseScraper, ScrapedEvent
 from app.scrapers.ticketmaster import TicketmasterScraper
 
 logger = logging.getLogger(__name__)
+
+
+# --- Reconcile safety valves ---
+#
+# Reconciling deletes rows, so it has to stay skeptical of its own input. A scraper that
+# half-succeeds — a selector that stops matching, a paginated feed that returns page one —
+# looks exactly like a venue that cancelled most of its calendar. These two constants
+# decide when a run is too lossy to trust.
+
+# Below this many orphans, reconcile always proceeds: small absolute numbers are normal
+# churn (a cancelled show, a series wrapping up) and never worth second-guessing.
+RECONCILE_ALWAYS_ALLOW = 4
+
+# Above that floor, refuse to delete if orphans exceed this share of the venue's rows in
+# the scraped date window. Losing half a venue's calendar in one run means the scraper
+# broke, not that the venue emptied out.
+RECONCILE_MAX_ORPHAN_FRACTION = 0.5
+
+
+# --- Upsert planning ---
+
+
+@dataclass
+class UpsertPlan:
+    """What a scrape run should do to the rows already stored for a venue.
+
+    Pure data — computed by plan_upsert() without touching the session, so the matching
+    rules can be tested without a database.
+    """
+
+    updates: list[tuple[ScrapedEvent, Any]] = field(default_factory=list)   # (scraped, row to update)
+    inserts: list[ScrapedEvent] = field(default_factory=list)               # no row matched
+    superseded: list[Any] = field(default_factory=list)                     # older rows folded into a match
+    expired: list[Any] = field(default_factory=list)                        # rows the source no longer lists
+    reconcile_skipped: bool = False                                         # True when the safety valve tripped
+
+
+def dedupe_scraped(scraped_events: list[ScrapedEvent]) -> list[ScrapedEvent]:
+    """Collapse repeats within a single scrape run, keeping the first of each.
+
+    Sites list the same event twice (a featured section plus the main listing), and
+    without this the repeats collide on Event.hash inside one INSERT batch.
+    """
+    out: list[ScrapedEvent] = []
+    seen_ext: set[tuple[str, date]] = set()
+    seen_hash: set[str] = set()
+
+    for se in scraped_events:
+        ext_key = (se.external_id, se.date) if se.external_id else None
+        if ext_key is not None and ext_key in seen_ext:
+            continue
+        if se.hash in seen_hash:
+            continue
+        if ext_key is not None:
+            seen_ext.add(ext_key)
+        seen_hash.add(se.hash)
+        out.append(se)
+
+    return out
+
+
+def plan_upsert(existing: list[Any], scraped_events: list[ScrapedEvent], today: date) -> UpsertPlan:
+    """Match a scrape run against the rows already stored for one venue.
+
+    Rows are matched on (external_id, date) first and only then on the title hash. That
+    order is the whole point: the hash is built from the title, so when a venue edits an
+    event — adding a support act, renaming it, prefixing a series — the hash changes and
+    a hash-only match sees a brand-new event. The venue's own ID does not change, so it
+    identifies the show across a rename where the title cannot.
+
+    Rows for the same show that were created by earlier renames are `superseded` and get
+    folded into the survivor. Rows inside the scraped date window that the source stopped
+    listing are `expired`.
+
+    Only attribute access is used on `existing` rows (.id, .date, .hash, .external_id,
+    .updated_at), so tests can pass stand-ins instead of ORM objects.
+    """
+    plan = UpsertPlan()
+    if not scraped_events:
+        return plan
+
+    by_ext: dict[tuple[str, date], list[Any]] = defaultdict(list)
+    by_hash: dict[str, Any] = {}
+    for row in existing:
+        if row.external_id:
+            by_ext[(row.external_id, row.date)].append(row)
+        by_hash[row.hash] = row
+
+    claimed: set[int] = set()
+
+    for se in scraped_events:
+        candidates: list[Any] = []
+        if se.external_id:
+            candidates.extend(by_ext.get((se.external_id, se.date), []))
+        hash_row = by_hash.get(se.hash)
+        if hash_row is not None:
+            candidates.append(hash_row)
+
+        # An external_id match and a hash match are often the same row; and a row already
+        # claimed by an earlier scraped event must not be claimed twice.
+        unique: list[Any] = []
+        picked: set[int] = set()
+        for row in candidates:
+            if row.id in claimed or row.id in picked:
+                continue
+            picked.add(row.id)
+            unique.append(row)
+
+        if not unique:
+            plan.inserts.append(se)
+            continue
+
+        # Prefer the row whose title already matches what the source says now; fall back
+        # to the most recently seen row. Both keys are total, so the choice is stable.
+        unique.sort(
+            key=lambda r: (r.hash == se.hash, r.updated_at or datetime.min),
+            reverse=True,
+        )
+        keep, rest = unique[0], unique[1:]
+        claimed.add(keep.id)
+        plan.updates.append((se, keep))
+        for row in rest:
+            claimed.add(row.id)
+            plan.superseded.append(row)
+
+    # --- Reconcile ---
+    # Only rows inside the window the scraper actually covered are candidates. A scraper
+    # that returns three months of listings says nothing about a show ten months out, and
+    # deleting past events would wipe the archive every run — venues drop them from their
+    # own listings as soon as they happen.
+    horizon = max(se.date for se in scraped_events)
+    in_window = [r for r in existing if today <= r.date <= horizon]
+    orphans = [r for r in in_window if r.id not in claimed]
+
+    if orphans:
+        too_lossy = (
+            len(orphans) > RECONCILE_ALWAYS_ALLOW
+            and len(orphans) > len(in_window) * RECONCILE_MAX_ORPHAN_FRACTION
+        )
+        if too_lossy:
+            plan.reconcile_skipped = True
+        else:
+            plan.expired = orphans
+
+    return plan
 
 
 # --- ScrapeManager ---
@@ -112,26 +264,28 @@ class ScrapeManager:
                 raise ValueError(f"No scraper available for {venue_slug}")
 
             scraped_events = await scraper.scrape()
-            created, updated = await self._upsert_events(venue_id, scraped_events)
+            counts = await self._upsert_events(venue_id, venue_slug, scraped_events)
 
             log.status = "success"
             log.events_found = len(scraped_events)
-            log.events_created = created
-            log.events_updated = updated
+            log.events_created = counts["created"]
+            log.events_updated = counts["updated"]
             log.finished_at = datetime.utcnow()
             log.duration_seconds = (log.finished_at - log.started_at).total_seconds()
             await self.session.commit()
 
+            # merged/expired counts have no ScrapeLog column yet, so they live in the log
+            # line and the API response. Individual removals are logged in _upsert_events.
             logger.info(
                 f"[{venue_slug}] Scrape complete: {len(scraped_events)} found, "
-                f"{created} created, {updated} updated"
+                f"{counts['created']} created, {counts['updated']} updated, "
+                f"{counts['merged']} merged, {counts['expired']} expired"
             )
             return {
                 "venue": venue_slug,
                 "status": "success",
                 "found": len(scraped_events),
-                "created": created,
-                "updated": updated,
+                **counts,
             }
 
         except Exception as e:
@@ -152,79 +306,104 @@ class ScrapeManager:
 
     # --- Upsert helpers ---
 
-    async def _upsert_events(self, venue_id: int, scraped_events: list[ScrapedEvent]) -> tuple[int, int]:
-        """Upsert events using hash-based dedup. Returns (created, updated) counts."""
+    @staticmethod
+    def _apply_scraped(row: Event, se: ScrapedEvent) -> None:
+        """Copy a freshly scraped event onto the row that represents it.
+
+        The title and its hash are written back, because a row matched on external_id may
+        be carrying a title the venue has since edited. Optional fields fall back to the
+        stored value so a source that briefly omits a field does not blank out good data.
+        """
+        row.name = se.name
+        row.artist = se.artist or row.artist
+        row.hash = se.hash
+        row.external_id = se.external_id or row.external_id
+        row.source = se.source
+        row.source_url = se.source_url or row.source_url
+        row.price_min = se.price_min
+        row.price_max = se.price_max
+        row.status = se.status
+        row.image_url = se.image_url or row.image_url
+        row.ticket_url = se.ticket_url or row.ticket_url
+        row.doors_time = se.doors_time or row.doors_time
+        row.show_time = se.show_time or row.show_time
+        row.support_artists = se.support_artists or row.support_artists
+        row.genre = se.genre or row.genre
+        row.subgenre = se.subgenre or row.subgenre
+        row.age_restriction = se.age_restriction or row.age_restriction
+        row.description = se.description or row.description
+        row.updated_at = datetime.utcnow()
+
+    async def _upsert_events(self, venue_id: int, venue_slug: str, scraped_events: list[ScrapedEvent]) -> dict:
+        """Reconcile a scrape run against stored events. Returns per-outcome counts."""
         if not scraped_events:
-            return 0, 0
+            return {"created": 0, "updated": 0, "merged": 0, "expired": 0}
 
-        # Deduplicate scraped events by hash (sites sometimes list the same event
-        # twice — e.g. a featured section + main listing — which would cause a
-        # UniqueViolationError when both end up in the same INSERT flush batch.
-        seen: dict[str, ScrapedEvent] = {}
-        for se in scraped_events:
-            seen.setdefault(se.hash, se)
-        scraped_events = list(seen.values())
+        scraped_events = dedupe_scraped(scraped_events)
 
-        # Fetch all matching existing events in one query instead of one per event.
-        hashes = [se.hash for se in scraped_events]
+        # Load the venue's whole calendar in one query. Matching on external_id and
+        # spotting rows the source dropped both need the full picture, and no venue
+        # holds more than a couple hundred rows.
         result = await self.session.execute(
-            select(Event).where(Event.hash.in_(hashes))
+            select(Event).where(Event.venue_id == venue_id)
         )
-        existing_by_hash = {e.hash: e for e in result.scalars().all()}
+        existing = list(result.scalars().all())
 
-        created = 0
-        updated = 0
+        plan = plan_upsert(existing, scraped_events, datetime.utcnow().date())
 
-        for se in scraped_events:
-            existing = existing_by_hash.get(se.hash)
+        if plan.reconcile_skipped:
+            logger.warning(
+                f"[{venue_slug}] Reconcile skipped: {len(scraped_events)} events scraped would "
+                f"orphan too large a share of the stored calendar. Leaving rows in place — "
+                f"this usually means the scraper is partially broken, not that the venue emptied."
+            )
 
-            if existing:
-                # Update mutable fields — identity fields (name, date, venue) are
-                # baked into the hash so they never change for a given event row.
-                existing.price_min = se.price_min
-                existing.price_max = se.price_max
-                existing.status = se.status
-                # Prefer the freshly scraped value but fall back to whatever we already
-                # have stored so we don't accidentally blank out previously-good data.
-                existing.image_url = se.image_url or existing.image_url
-                existing.ticket_url = se.ticket_url or existing.ticket_url
-                existing.doors_time = se.doors_time or existing.doors_time
-                existing.show_time = se.show_time or existing.show_time
-                existing.support_artists = se.support_artists or existing.support_artists
-                existing.genre = se.genre or existing.genre
-                existing.subgenre = se.subgenre or existing.subgenre
-                existing.age_restriction = se.age_restriction or existing.age_restriction
-                existing.description = se.description or existing.description
-                existing.updated_at = datetime.utcnow()
-                updated += 1
-            else:
-                event = Event(
-                    external_id=se.external_id,
-                    venue_id=venue_id,
-                    name=se.name,
-                    artist=se.artist,
-                    support_artists=se.support_artists,
-                    date=se.date,
-                    doors_time=se.doors_time,
-                    show_time=se.show_time,
-                    ticket_url=se.ticket_url,
-                    price_min=se.price_min,
-                    price_max=se.price_max,
-                    image_url=se.image_url,
-                    genre=se.genre,
-                    subgenre=se.subgenre,
-                    status=se.status,
-                    age_restriction=se.age_restriction,
-                    description=se.description,
-                    source=se.source,
-                    source_url=se.source_url,
-                    hash=se.hash,
-                )
-                self.session.add(event)
-                created += 1
+        # Deletes go first, and get their own flush. Event.hash is globally unique, and a
+        # surviving row is often about to take the hash a superseded row still holds.
+        removals = (
+            [(r, "superseded by another listing for the same show") for r in plan.superseded]
+            + [(r, "no longer listed by the source") for r in plan.expired]
+        )
+        for row, why in removals:
+            logger.info(f"[{venue_slug}] Removing event {row.id} ({row.date} {row.name!r}) — {why}")
+            await self.session.delete(row)
+        if removals:
+            await self.session.flush()
+
+        for se, row in plan.updates:
+            self._apply_scraped(row, se)
+
+        for se in plan.inserts:
+            self.session.add(Event(
+                external_id=se.external_id,
+                venue_id=venue_id,
+                name=se.name,
+                artist=se.artist,
+                support_artists=se.support_artists,
+                date=se.date,
+                doors_time=se.doors_time,
+                show_time=se.show_time,
+                ticket_url=se.ticket_url,
+                price_min=se.price_min,
+                price_max=se.price_max,
+                image_url=se.image_url,
+                genre=se.genre,
+                subgenre=se.subgenre,
+                status=se.status,
+                age_restriction=se.age_restriction,
+                description=se.description,
+                source=se.source,
+                source_url=se.source_url,
+                hash=se.hash,
+            ))
 
         await self.session.flush()
-        return created, updated
+        return {
+            "created": len(plan.inserts),
+            "updated": len(plan.updates),
+            "merged": len(plan.superseded),
+            "expired": len(plan.expired),
+        }
 
     # --- Bulk scrape entry points ---
 
