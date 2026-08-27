@@ -173,10 +173,30 @@ only want the deployed SHA can still read it from a 503.
 Freshness is enforced only when `APP_ENV=production`. CI and local runs disable scraping on
 purpose, so an empty `ScrapeLog` is expected there and must not fail the smoke test.
 
-**Point any monitor at `https://triangle-shows.net/api/health`, not the `.run.app` URL.** The
-Cloudflare Worker is the component whose failure takes the public site down while Cloud Run
-stays healthy — a check against the origin would report all-clear through exactly that outage.
-Allow a generous timeout (~30s) for cold starts, and alert only after two consecutive failures.
+### Uptime checking
+
+External monitoring runs on **[UptimeRobot](https://uptimerobot.com)** (free plan):
+
+| | |
+|---|---|
+| Target | `https://triangle-shows.net/api/health` |
+| Interval | every 15 minutes |
+| Alerts | email |
+
+**The monitor must target the public hostname, not the `.run.app` URL.** The Cloudflare Worker
+is the component whose failure takes the public site down while Cloud Run stays perfectly
+healthy — a check against the origin would report all-clear through exactly that outage. Going
+through the public hostname exercises DNS, Cloudflare, the Worker, Cloud Run, and Neon in one
+request.
+
+Keep the request timeout generous (~30s). With `min-instances=0` the first request after an
+idle period pays a 2–3 second cold start, and at a 15-minute interval most checks arrive after
+Cloud Run has already scaled down — so cold starts are the normal case here, not the exception.
+
+**Detection latency is roughly 15–30 minutes.** One missed check takes up to 15 minutes to
+occur, and if the monitor is set to alert only after two consecutive failures, that doubles.
+That's a deliberate tradeoff against false alarms rather than an oversight; shortening the
+interval is the lever if an outage needs noticing sooner.
 
 ## If something breaks
 

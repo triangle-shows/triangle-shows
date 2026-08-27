@@ -138,7 +138,7 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for how a request reaches the app an
 
 ## Roadmap
 
-Upcoming features and ideas are tracked in [GitHub Issues](https://github.com/ty-fi/triangle-shows/issues). Some things I'm currently thinking about:
+Upcoming features and ideas are tracked in [GitHub Issues](https://github.com/triangle-shows/triangle-shows/issues). Some things I'm currently thinking about:
 
 - Adding more venues (Sharp 9 Gallery, the Fruit, others)
 - Handling custom/one-off events and form submission
