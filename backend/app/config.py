@@ -25,6 +25,23 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     LOG_LEVEL: str = "INFO"
 
+    # --- Origin enforcement (see app.tokens) ---
+    # The Cloud Run service accepts unauthenticated requests, so its .run.app hostnames
+    # reach the app without passing Cloudflare. These settings let the app itself verify
+    # who a request came from on the two routes that must not be open there.
+    #
+    # Each gate is inert until configured, deliberately: local dev and CI have no
+    # Cloudflare and no Cloud Scheduler in front of them. app.tokens.log_enforcement_state()
+    # logs which gates are live on every boot, so "inert" is never silent.
+
+    # Cloudflare Access gate on /admin/*. Both are required to enforce.
+    CF_ACCESS_TEAM_DOMAIN: str = ""  # e.g. "triangleshows.cloudflareaccess.com"
+    CF_ACCESS_AUD: str = ""  # the Access application's AUD tag
+
+    # Google OIDC gate on POST /api/scrape. Cloud Scheduler already sends the token.
+    SCRAPE_ALLOWED_SERVICE_ACCOUNTS: str = ""  # comma-separated service-account emails
+    SCRAPE_OIDC_AUDIENCE: str = ""  # optional; the audience configured on the scheduler job
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
