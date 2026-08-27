@@ -26,6 +26,8 @@ from app.classifier import (  # noqa: E402
     classification_updates,
     normalize_series_name,
     criteria_summary,
+    reclassify_floor,
+    RECLASSIFY_PAST_DAYS,
 )
 
 
@@ -310,3 +312,28 @@ def test_criteria_summary_shape():
     assert "saturday" in summary["night_exceptions"]
     assert "dpac" in summary["always_live_venues"]
     assert "comedy" in summary["non_music_genres"]
+
+
+# --- reclassify_floor ---
+
+def test_reclassify_floor_reaches_into_the_past():
+    """The window must extend behind today, not just forward.
+
+    The calendar can be scrolled back into recent dates, and those events carry
+    is_live_music too — if the floor were today, past events would freeze at whatever
+    they were last set to and stop responding to series rules.
+    """
+    today = date(2026, 8, 27)
+    assert reclassify_floor(today) < today
+    assert reclassify_floor(today) == today - timedelta(days=RECLASSIFY_PAST_DAYS)
+
+
+def test_reclassify_floor_window_is_about_a_month():
+    """Guards the constant itself. Widening it changes the blast radius of every
+    series action and of the admin queue, so a change here should be deliberate."""
+    assert RECLASSIFY_PAST_DAYS == 30
+
+
+def test_reclassify_floor_defaults_to_today():
+    """Called with no argument in production code paths, so the default must work."""
+    assert reclassify_floor() == date.today() - timedelta(days=RECLASSIFY_PAST_DAYS)

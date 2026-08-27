@@ -31,6 +31,7 @@ surfaced verbatim to the admin UI via criteria_summary().
 # --- Imports ---
 import re
 from collections import defaultdict
+from datetime import date, timedelta
 from typing import Iterable, Optional
 
 
@@ -39,6 +40,21 @@ from typing import Iterable, Optional
 # An event whose (venue, name) repeats on at least this many distinct future
 # dates is treated as a recurring, non-live series.
 RECURRENCE_THRESHOLD = 3
+
+# How far into the past reclassification and admin moderation reach. The calendar can
+# be scrolled back into recent past dates, and those events carry is_live_music too, so
+# they need to respond to live/non-live changes rather than staying frozen at whatever
+# they were last set to. Older events are settled and left alone.
+#
+# Note this also widens the recurrence window: instances just behind today now count
+# toward RECURRENCE_THRESHOLD, so a series is recognised sooner than it would be from
+# future dates alone.
+RECLASSIFY_PAST_DAYS = 30
+
+
+def reclassify_floor(today: Optional[date] = None) -> date:
+    """Earliest event date that reclassification and admin moderation still touch."""
+    return (today or date.today()) - timedelta(days=RECLASSIFY_PAST_DAYS)
 
 # Venues assumed to be entirely live music — exempt from non-live flagging.
 # DPAC hosts touring concerts/Broadway/comedy, but per product decision it is
