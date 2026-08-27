@@ -51,17 +51,30 @@ class TestGatesInertWhenUnconfigured:
     without breaking local dev, CI, or the running site.
     """
 
-    # Asserted as "not 403" rather than as a specific status on purpose. What matters is
-    # that the middleware passed the request through; what it then meets is not this
-    # test's business. Pinning an exact code here once meant pinning 404 — the code you
-    # get when /admin does not exist — which broke as soon as PR #36 added the admin
-    # subsite and /admin started answering 303 and 200.
+    # What matters is that the *middleware* passed the request through; what the handler
+    # then decides is not this test's business. That distinction has now bitten twice:
+    #
+    #   - pinning an exact status meant pinning 404, which broke when #36 added the admin
+    #     subsite and /admin began answering 303
+    #   - relaxing it to "not 403" broke when /admin/login gained its own, legitimate 403
+    #     for "no password configured and no Access identity"
+    #
+    # So assert on the gate's own rejection body instead, which is unambiguous.
 
-    def test_admin_is_not_403ed_when_unconfigured(self, client, gates_off):
-        assert client.get("/admin", follow_redirects=False).status_code != 403
+    # Distinguished by shape, not by wording: the middleware rejects with JSON, every
+    # /admin handler responds with HTML or a redirect. Matching on the phrase "Cloudflare
+    # Access" was the first attempt and it false-positived, because the handler's own
+    # "login is disabled" page mentions Cloudflare Access too.
+    def _passed_the_gate(self, response):
+        if response.status_code != 403:
+            return True
+        return "application/json" not in response.headers.get("content-type", "")
 
-    def test_admin_login_is_not_403ed_when_unconfigured(self, client, gates_off):
-        assert client.get("/admin/login", follow_redirects=False).status_code != 403
+    def test_admin_is_not_gated_when_unconfigured(self, client, gates_off):
+        assert self._passed_the_gate(client.get("/admin", follow_redirects=False))
+
+    def test_admin_login_is_not_gated_when_unconfigured(self, client, gates_off):
+        assert self._passed_the_gate(client.get("/admin/login", follow_redirects=False))
 
 
 # --- Configured: /admin gate ---
