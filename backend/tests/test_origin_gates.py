@@ -51,13 +51,17 @@ class TestGatesInertWhenUnconfigured:
     without breaking local dev, CI, or the running site.
     """
 
+    # Asserted as "not 403" rather than as a specific status on purpose. What matters is
+    # that the middleware passed the request through; what it then meets is not this
+    # test's business. Pinning an exact code here once meant pinning 404 — the code you
+    # get when /admin does not exist — which broke as soon as PR #36 added the admin
+    # subsite and /admin started answering 303 and 200.
+
     def test_admin_is_not_403ed_when_unconfigured(self, client, gates_off):
-        # /admin does not exist on main — the admin subsite arrives with PR #36. A 404
-        # proves the middleware passed the request through rather than rejecting it.
-        assert client.get("/admin").status_code == 404
+        assert client.get("/admin", follow_redirects=False).status_code != 403
 
     def test_admin_login_is_not_403ed_when_unconfigured(self, client, gates_off):
-        assert client.get("/admin/login").status_code == 404
+        assert client.get("/admin/login", follow_redirects=False).status_code != 403
 
 
 # --- Configured: /admin gate ---
