@@ -92,6 +92,11 @@ class Event(Base):
     is_live_music: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     is_manual_override: Mapped[bool] = mapped_column(Boolean, default=False)  # True once an admin sets the flag by hand
     classification_reason: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # human-readable why, e.g. "recurring: 6 dates", "keyword: trivia", "manual"
+    # Set when an admin confirms the current classification is correct; the admin list
+    # hides approved events by default. Records agreement with a *verdict*, not the
+    # event: reclassify_all() clears this whenever it changes is_live_music, so a
+    # re-classified event returns to the review queue rather than staying hidden.
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
