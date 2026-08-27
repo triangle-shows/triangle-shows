@@ -98,7 +98,7 @@ steps:
       # Turn them on by extending the line below in place. gcloud rejects
       # --set-env-vars alongside --update-env-vars, so append rather than adding a line:
       #
-      #   - --set-env-vars=APP_ENV=production,ENABLE_SCHEDULER=false,LOG_LEVEL=INFO,CF_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com,CF_ACCESS_AUD=<aud-tag>,SCRAPE_ALLOWED_SERVICE_ACCOUNTS=<scheduler-sa-email>,SCRAPE_OIDC_AUDIENCE=<audience-on-the-scheduler-job>
+      #   - --set-env-vars=APP_ENV=production,ENABLE_SCHEDULER=false,ENABLE_STARTUP_SCRAPE=false,LOG_LEVEL=INFO,CF_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com,CF_ACCESS_AUD=<aud-tag>,SCRAPE_ALLOWED_SERVICE_ACCOUNTS=<scheduler-sa-email>,SCRAPE_OIDC_AUDIENCE=<audience-on-the-scheduler-job>
       #
       # Enable the scrape gate first: its token already arrives, so it can be verified
       # with nothing else in place. The /admin gate needs a Cloudflare Access application
@@ -116,7 +116,7 @@ steps:
       #
       # The alternative is --no-cpu-throttling, which keeps CPU allocated on idle
       # instances and costs more for work the scheduler already does deterministically.
-      - --set-env-vars=APP_ENV=production,ENABLE_SCHEDULER=false,LOG_LEVEL=INFO,ENABLE_STARTUP_SCRAPE=false
+      - --set-env-vars=APP_ENV=production,ENABLE_SCHEDULER=false,LOG_LEVEL=INFO,ENABLE_STARTUP_SCRAPE=false,SCRAPE_ALLOWED_SERVICE_ACCOUNTS=triangle-shows-scrape@triangle-shows.iam.gserviceaccount.com,SCRAPE_OIDC_AUDIENCE=https://triangle-shows.net/api/scrape
       - --update-secrets=DATABASE_URL=triangle-shows-db-url:latest
       - --update-secrets=TICKETMASTER_API_KEY=triangle-shows-tm-api-key:latest
       # Admin subsite — uncomment BOTH lines only after creating the two secrets
