@@ -15,6 +15,11 @@ venv/
 # from the global convention of tracking AI-managed session files, which assumes a
 # private repo.
 _*.md
+_context-history/
+
+# Legacy dot-prefixed names. /save-context used these briefly before the convention
+# went back to the `_` prefix. Kept as a guard so a machine still running the older
+# skill cannot re-create them untracked in a public repo.
 .SESSION-CONTEXT.md
 .todo
 .context-history/
