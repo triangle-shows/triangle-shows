@@ -8,7 +8,7 @@
 ## Setup
 
 ```bash
-git clone https://github.com/ty-fi/triangle-shows
+git clone https://github.com/triangle-shows/triangle-shows
 cd triangle-shows
 
 # Copy the example env file and fill in your Ticketmaster API key

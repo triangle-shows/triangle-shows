@@ -35,7 +35,7 @@ DEFAULT_TIMEOUT = 900  # give up after 15 minutes rather than polling forever
 
 # Cloudflare fronts triangle-shows.net and rejects urllib's default
 # "Python-urllib/x.y" agent with a 403. Any identifiable agent gets through.
-USER_AGENT = "triangle-shows-deploy-watcher/1.0 (+https://github.com/ty-fi/triangle-shows)"
+USER_AGENT = "triangle-shows-deploy-watcher/1.0 (+https://github.com/triangle-shows/triangle-shows)"
 
 
 # --- Helpers ---
