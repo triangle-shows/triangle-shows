@@ -158,6 +158,26 @@ because only `prod` deploys. Migrations execute against real data at deploy time
 earlier — see the Database & migrations section of
 [CONTRIBUTING.md](../.github/CONTRIBUTING.md) for what that implies about writing them.
 
+## Monitoring
+
+`/api/health` is the endpoint to watch. It queries the database for its counts, so a 200
+response proves the app is up *and* Neon is reachable — more than a check against `/` would
+tell you.
+
+It also reports **503 with `status: "stale"`** when the most recent successful scrape is older
+than 13 hours (two scheduler cycles plus slack). That turns silently-stopped scraping into
+something a plain uptime monitor can catch, rather than a failure that looks healthy until
+someone notices the listings are old. The response body is identical either way, so tools that
+only want the deployed SHA can still read it from a 503.
+
+Freshness is enforced only when `APP_ENV=production`. CI and local runs disable scraping on
+purpose, so an empty `ScrapeLog` is expected there and must not fail the smoke test.
+
+**Point any monitor at `https://triangle-shows.net/api/health`, not the `.run.app` URL.** The
+Cloudflare Worker is the component whose failure takes the public site down while Cloud Run
+stays healthy — a check against the origin would report all-clear through exactly that outage.
+Allow a generous timeout (~30s) for cold starts, and alert only after two consecutive failures.
+
 ## If something breaks
 
 | Symptom | Likely cause |
