@@ -173,10 +173,20 @@ only want the deployed SHA can still read it from a 503.
 Freshness is enforced only when `APP_ENV=production`. CI and local runs disable scraping on
 purpose, so an empty `ScrapeLog` is expected there and must not fail the smoke test.
 
-**Point any monitor at `https://triangle-shows.net/api/health`, not the `.run.app` URL.** The
-Cloudflare Worker is the component whose failure takes the public site down while Cloud Run
-stays healthy — a check against the origin would report all-clear through exactly that outage.
-Allow a generous timeout (~30s) for cold starts, and alert only after two consecutive failures.
+### Uptime checking
+
+External monitoring runs on **[UptimeRobot](https://uptimerobot.com)** (free plan), checking
+`https://triangle-shows.net/api/health`.
+
+**The monitor must target the public hostname, not the `.run.app` URL.** The Cloudflare Worker
+is the component whose failure takes the public site down while Cloud Run stays perfectly
+healthy — a check against the origin would report all-clear through exactly that outage. Going
+through the public hostname exercises DNS, Cloudflare, the Worker, Cloud Run, and Neon in one
+request.
+
+Two settings worth keeping as they are: a generous request timeout (~30s), because
+`min-instances=0` means the first request after an idle period pays a 2–3 second cold start;
+and alerting only after two consecutive failures, so a single blip doesn't page anyone.
 
 ## If something breaks
 
