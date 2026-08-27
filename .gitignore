@@ -9,8 +9,15 @@ venv/
 .vscode/
 *.log
 
-# Internal process docs (session context, deployment guides, roadmap)
+# Internal process docs (session context, deployment guides, roadmap).
+# This repo is PUBLIC and these carry operational detail — cost figures, the private
+# internal repo, infrastructure notes — so they stay local. This deliberately differs
+# from the global convention of tracking AI-managed session files, which assumes a
+# private repo.
 _*.md
+.SESSION-CONTEXT.md
+.todo
+.context-history/
 .claude/
 .claude*
 CLAUDE.md
