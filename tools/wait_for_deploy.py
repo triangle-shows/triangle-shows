@@ -64,7 +64,15 @@ def get_deployed_version(url):
             # The health endpoint embeds the deployed git SHA as "version"
             return data.get("version", "unknown")
     except urllib.error.HTTPError as e:
-        # Must precede URLError — HTTPError subclasses it, and the status code matters
+        # Must precede URLError — HTTPError subclasses it, and the status code matters.
+        # A 503 from the stale-data check still carries the deployed SHA in its body,
+        # so read it rather than reporting the revision as unreachable.
+        try:
+            version = json.loads(e.read()).get("version")
+            if version:
+                return version
+        except Exception:
+            pass
         return f"(http {e.code} {e.reason})"
     except urllib.error.URLError as e:
         # App is still coming up or unreachable — not a fatal error, just keep polling
