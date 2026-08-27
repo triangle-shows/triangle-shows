@@ -26,7 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import settings
-from app.models import Venue, Event, ScrapeLog
+from app.classifier import classification_updates, reclassify_floor, ALWAYS_LIVE_VENUE_SLUGS
+from app.models import Venue, Event, ScrapeLog, SeriesOverride
 from app.scrapers.base import BaseScraper, ScrapedEvent
 from app.scrapers.ticketmaster import TicketmasterScraper
 
@@ -405,6 +406,73 @@ class ScrapeManager:
             "expired": len(plan.expired),
         }
 
+    # --- Classification ---
+
+    async def reclassify_all(self) -> dict:
+        """Recompute is_live_music for upcoming events and the recent past.
+
+        Runs after every bulk scrape. Recurrence is a cross-event signal, so this
+        always considers the full set of events in range regardless of which venues
+        were just scraped. Admin decisions are respected: per-event manual overrides
+        (is_manual_override=True) are left untouched, and series-level overrides are
+        applied to every matching event — including instances scraped later.
+
+        The range reaches RECLASSIFY_PAST_DAYS behind today, not just forward: the
+        calendar can be scrolled back into recent dates, and those events need to
+        respond to live/non-live changes too. Returns {events, changed} counts.
+        """
+        result = await self.session.execute(
+            select(Event).where(Event.date >= reclassify_floor())
+        )
+        events = result.scalars().all()
+
+        # Load series-level overrides, keyed to match classifier.normalize_series_name.
+        so_result = await self.session.execute(select(SeriesOverride))
+        series_overrides = {
+            (so.venue_id, so.normalized_name): (so.is_live_music, so.note)
+            for so in so_result.scalars().all()
+        }
+
+        # Resolve always-live venues (e.g. DPAC) to their ids for the exemption.
+        venue_rows = await self.session.execute(select(Venue.id, Venue.slug))
+        exempt_venue_ids = {
+            vid for vid, slug in venue_rows.all() if slug in ALWAYS_LIVE_VENUE_SLUGS
+        }
+
+        # classification_updates omits manually-overridden rows (those flags survive),
+        # forces always-live venues, and applies series overrides above auto.
+        updates = classification_updates(
+            events,
+            series_overrides=series_overrides,
+            exempt_venue_ids=exempt_venue_ids,
+        )
+
+        changed = 0
+        unapproved = 0
+        for ev in events:
+            if ev.id not in updates:
+                continue
+            is_live, reason = updates[ev.id]
+            if ev.is_live_music != is_live or ev.classification_reason != reason:
+                # An approval records agreement with a specific verdict. If the verdict
+                # itself moves, that approval is stale — clear it so the event returns
+                # to the review queue instead of staying hidden behind an old decision.
+                # Only a change of is_live_music counts; a reworded reason is not a
+                # different answer and should not resurface work already reviewed.
+                if ev.is_live_music != is_live and ev.approved_at is not None:
+                    ev.approved_at = None
+                    unapproved += 1
+                ev.is_live_music = is_live
+                ev.classification_reason = reason
+                changed += 1
+
+        await self.session.commit()
+        logger.info(
+            f"Reclassified {len(events)} events in range; {changed} changed, "
+            f"{unapproved} approvals cleared (manual overrides preserved)"
+        )
+        return {"events": len(events), "changed": changed, "unapproved": unapproved}
+
     # --- Bulk scrape entry points ---
 
     async def scrape_all(self, scraper_types: Optional[list[str]] = None) -> list[dict]:
@@ -422,6 +490,9 @@ class ScrapeManager:
             r = await self.scrape_venue(venue)
             results.append(r)
 
+        # Recompute live-music flags across all upcoming events now that new data is in.
+        await self.reclassify_all()
+
         return results
 
     async def scrape_ticketmaster(self) -> list[dict]:
@@ -438,4 +509,8 @@ class ScrapeManager:
         for venue in venues:
             r = await self.scrape_venue(venue)
             results.append(r)
+
+        # Recompute live-music flags across all upcoming events now that new data is in.
+        await self.reclassify_all()
+
         return results

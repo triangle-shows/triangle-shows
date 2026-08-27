@@ -25,7 +25,7 @@ from app.config import settings
 from app.database import async_session
 from app.seed import seed_venues
 from app.scheduler import scheduler, configure_scheduler
-from app.api import events, venues, health, feeds
+from app.api import events, venues, health, feeds, admin
 from app import tokens
 
 # --- Logging setup ---
@@ -189,6 +189,9 @@ app.include_router(events.router)
 app.include_router(venues.router)
 app.include_router(health.router)
 app.include_router(feeds.router)
+# Admin subsite — must be registered before the "/" static mount below so its
+# routes take priority over the catch-all StaticFiles handler.
+app.include_router(admin.router)
 
 # --- Origin enforcement on POST /api/scrape ---
 

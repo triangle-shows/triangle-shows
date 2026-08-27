@@ -28,12 +28,28 @@ router = APIRouter(prefix="/api/events", tags=["events"])
 # --- Helpers ---
 
 def _completeness(event: Event) -> tuple:
-    """Rank two listings of the same show: richer record wins, then most recently scraped.
+    """Rank two listings of the same show, most authoritative key first.
+
+    Classification comes before metadata richness, because this guard runs before any
+    live-music filtering and so decides which row's verdict the calendar sees. Two rows for
+    one show can classify differently — most plausibly when an admin has hand-set one of
+    them, or when the dedup key and the recurrence key normalize a name differently. Ranking
+    only on field counts let the richer row win and silently discard the other's verdict,
+    which could drop a real show off the default calendar.
+
+    1. is_manual_override — an admin looked at this row and decided; that outranks anything
+       computed.
+    2. is_live_music — between two automatic verdicts, prefer the visible one. Consistent
+       with the feature's chosen failure direction: showing something that should have been
+       hidden is recoverable, hiding a real show is what users never see.
+    3. field count, then recency, then id — the original ordering, now as tiebreakers.
 
     Every component is total and the id breaks the last tie, so the winner does not depend
     on the order the database returned rows in.
     """
     return (
+        bool(getattr(event, "is_manual_override", False)),
+        bool(event.is_live_music),
         bool(event.image_url) + bool(event.ticket_url) + (event.price_min is not None),
         event.updated_at or datetime.min,
         event.id,
@@ -61,6 +77,7 @@ def _event_to_response(event: Event) -> EventResponse:
         age_restriction=event.age_restriction,
         description=event.description,
         source=event.source,
+        is_live_music=event.is_live_music,
         venue_name=event.venue.name if event.venue else None,
         venue_slug=event.venue.slug if event.venue else None,
         venue_city=event.venue.city if event.venue else None,
@@ -199,6 +216,8 @@ async def get_fullcalendar_events(
                 "status": event.status,
                 "age_restriction": event.age_restriction,
                 "description": event.description,
+                # Drives the client-side "Include non-live music?" toggle (filters.js).
+                "is_live_music": event.is_live_music,
             },
         })
 
@@ -220,21 +239,24 @@ async def get_event(
     return _event_to_response(event)
 
 
-@router.get("")
-async def list_events(
-    start: Optional[str] = Query(None),
-    end: Optional[str] = Query(None),
-    search: Optional[str] = Query(None),
-    genre: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    page: int = Query(1, ge=1),
-    per_page: int = Query(50, ge=1, le=200),
-    session: AsyncSession = Depends(get_session),
-) -> EventListResponse:
-    """List events with filters and pagination."""
-    query = select(Event).options(joinedload(Event.venue)).order_by(Event.date)
-    count_query = select(func.count(Event.id))
+def _list_conditions(
+    *,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    search: Optional[str] = None,
+    genre: Optional[str] = None,
+    status: Optional[str] = None,
+    include_non_music: bool = False,
+) -> list:
+    """Build the WHERE clauses for the events list, as data.
 
+    Split out of list_events so the filtering can be tested without a database. Declaring
+    the query parameter and then failing to apply it is a silent bug — the endpoint keeps
+    answering, just with the wrong rows — and an endpoint-level test cannot catch it
+    without Postgres.
+
+    Malformed dates are ignored rather than rejected, matching the previous behavior.
+    """
     conditions = []
 
     if start:
@@ -257,6 +279,45 @@ async def list_events(
         conditions.append(Event.genre.ilike(f"%{genre}%"))
     if status:
         conditions.append(Event.status == status)
+    # Default to live music only, so this endpoint stops being the one place the filter does
+    # not apply. /feeds/events.ics already behaves this way; the FullCalendar endpoint
+    # deliberately still returns everything, because filters.js toggles visibility in the
+    # browser without refetching, and filtering there server-side would empty the calendar
+    # when the toggle is switched on.
+    if not include_non_music:
+        conditions.append(Event.is_live_music.is_(True))
+
+    return conditions
+
+
+@router.get("")
+async def list_events(
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    genre: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    include_non_music: bool = Query(
+        False,
+        description="Include non-live-music events (karaoke, trivia, theme nights, etc.). "
+                    "Off by default, matching /feeds/events.ics and the on-site calendar.",
+    ),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+) -> EventListResponse:
+    """List events with filters and pagination."""
+    query = select(Event).options(joinedload(Event.venue)).order_by(Event.date)
+    count_query = select(func.count(Event.id))
+
+    conditions = _list_conditions(
+        start=start,
+        end=end,
+        search=search,
+        genre=genre,
+        status=status,
+        include_non_music=include_non_music,
+    )
 
     if conditions:
         query = query.where(and_(*conditions))

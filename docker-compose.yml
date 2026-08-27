@@ -14,12 +14,20 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Dev stage adds requirements-dev.txt (pytest), so the test suite runs in the
+      # container without a manual install after every rebuild. Cloud Build takes the
+      # untargeted default, which is the lean prod stage.
+      target: dev
     ports:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/triangle_shows
       ENABLE_SCHEDULER: "false"
       LOG_LEVEL: INFO
+      # Local-only admin credentials (the /admin subsite). Not secrets — production
+      # uses Secret Manager. Log in at http://localhost:8000/admin with this password.
+      ADMIN_PASSWORD: devpassword
+      SESSION_SECRET: local-dev-session-secret
     volumes:
       - ./backend:/app
       - ./frontend:/frontend
