@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import settings
-from app.classifier import classification_updates, ALWAYS_LIVE_VENUE_SLUGS
+from app.classifier import classification_updates, reclassify_floor, ALWAYS_LIVE_VENUE_SLUGS
 from app.models import Venue, Event, ScrapeLog, SeriesOverride
 from app.scrapers.base import BaseScraper, ScrapedEvent
 from app.scrapers.ticketmaster import TicketmasterScraper
@@ -409,18 +409,20 @@ class ScrapeManager:
     # --- Classification ---
 
     async def reclassify_all(self) -> dict:
-        """Recompute is_live_music for all upcoming events.
+        """Recompute is_live_music for upcoming events and the recent past.
 
         Runs after every bulk scrape. Recurrence is a cross-event signal, so this
-        always considers the full set of future events regardless of which venues
+        always considers the full set of events in range regardless of which venues
         were just scraped. Admin decisions are respected: per-event manual overrides
         (is_manual_override=True) are left untouched, and series-level overrides are
         applied to every matching event — including instances scraped later.
-        Returns {events, changed} counts.
+
+        The range reaches RECLASSIFY_PAST_DAYS behind today, not just forward: the
+        calendar can be scrolled back into recent dates, and those events need to
+        respond to live/non-live changes too. Returns {events, changed} counts.
         """
-        today = date.today()
         result = await self.session.execute(
-            select(Event).where(Event.date >= today)
+            select(Event).where(Event.date >= reclassify_floor())
         )
         events = result.scalars().all()
 
@@ -446,21 +448,30 @@ class ScrapeManager:
         )
 
         changed = 0
+        unapproved = 0
         for ev in events:
             if ev.id not in updates:
                 continue
             is_live, reason = updates[ev.id]
             if ev.is_live_music != is_live or ev.classification_reason != reason:
+                # An approval records agreement with a specific verdict. If the verdict
+                # itself moves, that approval is stale — clear it so the event returns
+                # to the review queue instead of staying hidden behind an old decision.
+                # Only a change of is_live_music counts; a reworded reason is not a
+                # different answer and should not resurface work already reviewed.
+                if ev.is_live_music != is_live and ev.approved_at is not None:
+                    ev.approved_at = None
+                    unapproved += 1
                 ev.is_live_music = is_live
                 ev.classification_reason = reason
                 changed += 1
 
         await self.session.commit()
         logger.info(
-            f"Reclassified {len(events)} upcoming events; {changed} changed "
-            f"(manual overrides preserved)"
+            f"Reclassified {len(events)} events in range; {changed} changed, "
+            f"{unapproved} approvals cleared (manual overrides preserved)"
         )
-        return {"events": len(events), "changed": changed}
+        return {"events": len(events), "changed": changed, "unapproved": unapproved}
 
     # --- Bulk scrape entry points ---
 
