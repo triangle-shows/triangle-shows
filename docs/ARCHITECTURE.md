@@ -54,7 +54,9 @@ does it instead:
 export default {
   async fetch(request) {
     const url = new URL(request.url);
-    url.hostname = 'triangle-shows-bs2va6mvba-ue.a.run.app';
+    // The hashed .run.app hostname — see "Origin hostnames" below for why it is not
+    // written out here, and how to look up the live value.
+    url.hostname = 'triangle-shows-<hash>-ue.a.run.app';
     return fetch(new Request(url.toString(), request));
   }
 }
@@ -73,25 +75,44 @@ contacted.
 
 | Domain | Type | Name | Target | Proxied |
 |---|---|---|---|---|
-| triangle-shows.net | CNAME | `@` | `triangle-shows-bs2va6mvba-ue.a.run.app` | Yes |
-| triangle-shows.net | CNAME | `www` | `triangle-shows-bs2va6mvba-ue.a.run.app` | Yes |
+| triangle-shows.net | CNAME | `@` | the hashed `.run.app` hostname | Yes |
+| triangle-shows.net | CNAME | `www` | the hashed `.run.app` hostname | Yes |
 | triangle-shows.org | A | `@` | `192.0.2.1` (dummy) | Yes |
 
 SSL mode is **Full**, with Always Use HTTPS on. Full works because the `.run.app` origin carries
 a valid Google-managed certificate.
 
-### Two Cloud Run URLs
+### Origin hostnames
 
-The service answers on both of these, and both are in active use:
+The service answers on two `.run.app` hostnames, both in active use:
 
+| Form | Used by |
+|---|---|
+| hashed — `triangle-shows-<hash>-ue.a.run.app` | Cloudflare Worker and the `.net` CNAMEs |
+| project-number — `triangle-shows-<project-number>.us-east1.run.app` | Cloud Scheduler |
+
+Cloud Run issues the project-number form for newer services and keeps the older hashed form
+working. They are the same service. This matters only when changing the hostname: the Worker
+hardcodes the hashed form, so updating one without the other breaks the site.
+
+**Both are deliberately left out of this repo, which is public.** No `--ingress` flag is set on
+the Cloud Run service, so it defaults to `ingress=all` and these hostnames reach the app directly,
+skipping Cloudflare and anything enforced there — including a Cloudflare Access policy on
+`/admin`. The `.net` CNAMEs are proxied, so the origin is not discoverable through public DNS
+either; this document was the only place it was written down.
+
+Treat that as reduced disclosure, not as protection: the origin stays directly reachable until
+ingress is restricted or the app requires a header only the Worker sets. Anything that must not be
+public needs its own authentication regardless of who knows the hostname.
+
+Look up the live values with:
+
+```bash
+gcloud run services describe triangle-shows \
+  --project=triangle-shows --region=us-east1 --format='value(status.url)'
 ```
-https://triangle-shows-bs2va6mvba-ue.a.run.app        ← Cloudflare Worker and CNAMEs
-https://triangle-shows-178508749672.us-east1.run.app  ← Cloud Scheduler
-```
 
-Cloud Run issues the second, project-number form for newer services and keeps the older hashed
-form working. They are the same service. This matters only when changing the hostname: the Worker
-hardcodes the first, so updating one without the other breaks the site.
+Both hostnames are also recorded in `_SESSION-CONTEXT.md`, which is gitignored.
 
 ## Deploy path
 
