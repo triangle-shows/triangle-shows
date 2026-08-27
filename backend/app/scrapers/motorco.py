@@ -22,6 +22,31 @@ from app.scrapers.base import BaseScraper, ScrapedEvent, BROWSER_HEADERS
 
 logger = logging.getLogger(__name__)
 
+# Each JS event object looks like:
+#   { title: 'Name', start: '2026-04-03 21:00', url: 'https://...', classNames: '...' }
+#
+# `title` is free text, so it must be matched as a proper JS string literal rather
+# than with a stop-at-the-first-quote pattern. WordPress `esc_js` backslash-escapes
+# any apostrophe inside the single-quoted value, and a naive `(.+?)['"]` terminates
+# at that escaped quote — truncating e.g. "This Tour Won't Save You" to
+# "This Tour Won\". Match the opening quote, then a run of escaped characters
+# (`\\.`) or non-quote characters, up to the matching closing quote. The captured
+# value still holds its backslashes; `_parse_event` collapses them.
+#
+# `start` and `url` values never contain a quote, so the simpler form is sufficient
+# (and clearer) for them.
+_EVENT_PATTERN = re.compile(
+    r'\{[^{}]*?title\s*:\s*(?P<q>[\'"])(?P<title>(?:\\.|(?!(?P=q)).)*)(?P=q)'
+    r'[^{}]*?start\s*:\s*[\'"](?P<start>\d{4}-\d{2}-\d{2}[^\'\"]*)[\'"]'
+    r'[^{}]*?url\s*:\s*[\'"](?P<url>[^\'\"]+)[\'"]',
+    re.S,
+)
+
+# A JS string escape is a backslash followed by any single character (`\'`, `\"`,
+# `\\`, `\/`). `esc_js` only ever emits a backslash as an escape introducer, so
+# collapsing each pair to its second character never eats a literal backslash.
+_JS_ESCAPE_PATTERN = re.compile(r"\\(.)")
+
 
 # --- Scraper class ---
 
@@ -46,23 +71,14 @@ class MotorcoScraper(BaseScraper):
             resp.raise_for_status()
             html = resp.text
 
-        # Each JS event object looks like:
-        #   { title: 'Name', start: '2026-04-03 21:00', url: 'https://...', classNames: '...' }
-        # Extract title, start, and url per event block.
-        pattern = re.compile(
-            r'\{[^{}]*?title\s*:\s*[\'"](.+?)[\'"]'
-            r'[^{}]*?start\s*:\s*[\'"](\d{4}-\d{2}-\d{2}[^\'\"]*)[\'"]'
-            r'[^{}]*?url\s*:\s*[\'"]([^\'\"]+)[\'"]',
-            re.S,
-        )
-
-        # Deduplicate by (title, start) — the regex can produce overlapping matches
-        # when event objects share similar surrounding HTML context.
+        # Deduplicate by (title, start). `finditer` yields non-overlapping matches,
+        # so this guards against the same event genuinely appearing twice in the
+        # page markup rather than against overlapping regex matches.
         seen = set()
-        for m in pattern.finditer(html):
-            raw_title, raw_start, raw_url = m.group(1), m.group(2), m.group(3)
+        for m in _EVENT_PATTERN.finditer(html):
+            raw_title, raw_start, raw_url = m.group("title"), m.group("start"), m.group("url")
 
-            # Skip duplicates (the regex can match overlapping regions)
+            # Skip an event object we have already seen
             key = (raw_title, raw_start)
             if key in seen:
                 continue
@@ -78,7 +94,9 @@ class MotorcoScraper(BaseScraper):
     def _parse_event(self, title: str, start_str: str, url: str, today: date) -> Optional[ScrapedEvent]:
         """Parse raw JS-extracted strings into a ScrapedEvent, or return None on failure."""
         try:
-            # Unescape HTML entities in title
+            # Collapse JS string escapes (esc_js turns an apostrophe into \'),
+            # then unescape HTML entities in title
+            title = _JS_ESCAPE_PATTERN.sub(r"\1", title)
             title = title.replace("&#038;", "&").replace("&amp;", "&").replace("&#8217;", "'")
 
             # Parse datetime — format is "2026-04-03 21:00" or "2026-04-03"
