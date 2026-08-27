@@ -6,7 +6,7 @@ false-positive guard, recurrence grouping, the manual-override skip that
 protects admin decisions from being overwritten on re-scrape, and series-level
 overrides (including keeping a recurring series as live music).
 
-Run from the backend/ directory:  python -m pytest tests/test_classifier.py
+Run from the backend/ directory:  pytest tests/test_classifier.py
 The classifier is pure stdlib, so no DB or fixtures are needed.
 
 NOT COVERED — known gaps, all requiring a database session:
@@ -31,16 +31,11 @@ session fixture against a throwaway database. The CI workflow already stands up 
 Postgres service container, so that is the natural place to hang it.
 """
 
-import sys
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from pathlib import Path
 from typing import Optional
 
-# Make `app` importable when running pytest from backend/.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from app.classifier import (  # noqa: E402
+from app.classifier import (
     classify_one,
     find_recurring_event_ids,
     classify_batch,
