@@ -38,7 +38,9 @@
 #   gcloud builds submit --config cloudbuild.yaml
 #
 # TO CONNECT A GITHUB TRIGGER:
-#   Cloud Build console → Triggers → Connect Repository → set trigger on push to main
+#   Cloud Build console → Triggers → Connect Repository → set trigger on push to prod
+#   (`prod` is the deploy branch; `main` is the default/integration branch and does not
+#   deploy. See .github/CONTRIBUTING.md for the promotion workflow.)
 
 substitutions:
   _REGION: us-east1

@@ -3,15 +3,19 @@
 ## Branch structure
 
 ```
-main                ← production; always deployable; protected
-  ├── feature/xyz
-  ├── feature/abc
-  └── fix/xyz
+prod                    ← what's actually deployed; protected
+  └── main              ← default branch; where work integrates; protected
+        ├── feature/xyz
+        ├── feature/abc
+        └── fix/xyz
 ```
 
-- `main` is the only long-lived branch. It is always deployable, and every push to it deploys.
+- `main` is the default branch and where all work lands. Merging into it does **not** deploy.
+- `prod` is the only branch that deploys. It receives merges from `main` and nothing else — never commit to it directly.
 - Feature and fix branches are created from `main`, worked on, then merged back into `main` via PR.
-- There is no integration branch. Work is combined by merging PRs into `main`, not by staging them elsewhere first.
+- Shipping is a separate, deliberate step: open a PR from `main` → `prod` when you're ready for the changes to go live.
+
+This split exists so that merging work and deploying work are two different decisions. You can merge a dozen PRs into `main` over a week and ship them as one deploy.
 
 ## Branch naming
 
@@ -22,28 +26,33 @@ main                ← production; always deployable; protected
 
 Names should be short and descriptive: `feature/event-submissions`, `fix/filter-performance`.
 
+An urgent production fix needs no special prefix — it's a `fix/` branch that gets merged to `main` and promoted to `prod` immediately, rather than waiting to be batched.
+
 ## Branch protection
 
-`main` is protected by a repository ruleset (GitHub Settings → Rules → Rulesets):
+Both long-lived branches are protected by repository rulesets (GitHub Settings → Rules → Rulesets):
 
 | Rule | Effect |
 |------|--------|
-| Require a pull request | No direct pushes to `main` — every change arrives through a PR |
+| Require a pull request | No direct pushes — every change arrives through a PR |
 | Restrict deletions | The branch itself cannot be deleted |
-| Block force pushes | History can only move forward; nothing already on `main` can be rewritten or dropped |
+| Block force pushes | History can only move forward; nothing already on the branch can be rewritten or dropped |
 
 "Restrict deletions" protects the *branch*, not files — a PR that deletes files merges normally.
 
-The ruleset currently targets the default branch rather than `main` by name. Since `main` is the default, that resolves correctly today. If the default branch is ever changed, repoint the ruleset to `refs/heads/main` first, or `main` will silently lose its protection.
+Repository admins can bypass these rules. Treat that as an escape hatch, not the workflow.
 
-Automatic head-branch deletion is on, so a feature branch is removed from GitHub once its PR merges. Your local copy survives — clean up with `git fetch --prune` and `git branch -d <branch>`.
+The `main` ruleset targets the default branch rather than `main` by name. Since `main` is the default, that resolves correctly today. If the default branch is ever changed, repoint the ruleset to `refs/heads/main` first, or `main` will silently lose its protection.
+
+Automatic head-branch deletion is on, so a feature branch is removed from GitHub once its PR merges. `main` is exempt because its ruleset restricts deletions — it survives being merged into `prod`. Your local copies survive regardless; clean up with `git fetch --prune` and `git branch -d <branch>`.
 
 ## Pull requests
 
-- **Every change goes through a PR.** The ruleset blocks direct pushes to `main` for everyone except repository admins, who can bypass it. Treat that bypass as an escape hatch, not the workflow.
+- **Every change goes through a PR**, including the `main` → `prod` promotion.
 - Use **Draft PRs** for in-flight work you want tracked but not yet merged.
 - Use `closes #12` in PR descriptions to auto-close linked issues when the PR merges.
 - The PR description is where you record *why* the change was made — commit messages cover *what*.
+- For a promotion PR, the description is the release note: what's shipping and anything to watch after it goes live.
 
 ## Issue and project tracking
 
@@ -55,11 +64,32 @@ Automatic head-branch deletion is on, so a feature branch is removed from GitHub
 
 ## Deployment
 
-Merging a PR into `main` triggers Cloud Build automatically → deploys to Cloud Run (`triangle-shows`, `us-east1`).
+Merging a PR into `prod` triggers Cloud Build automatically → deploys to Cloud Run (`triangle-shows`, `us-east1`). The trigger watches `prod` and only `prod`; pushes to `main` and feature branches build nothing.
 
-**Every merge to `main` incurs a small GCP build and hosting cost, and there is no staging environment.** Because each merged PR deploys on its own, group related work into a single PR rather than merging a string of small ones. Test locally first — see [SELF-HOSTING.md](../docs/SELF-HOSTING.md).
+**Every deploy incurs a small GCP build and hosting cost, and there is no staging environment.** Batch related work into `main` and promote once, rather than promoting after every merge.
 
-For visual/color changes: merge one change at a time and confirm it looks correct on the live site before stacking further changes.
+To watch a deploy land:
+
+```bash
+git checkout prod && git pull
+python tools/wait_for_deploy.py
+```
+
+That script compares the deployed commit against your local `HEAD`, so run it from `prod` — from `main` it will never match.
+
+For visual/color changes: promote one change at a time and confirm it looks correct on the live site before stacking further changes.
+
+## Releases
+
+Deploys are triggered by the promotion PR, not by tags — tagging is for humans, marking which commit shipped as which version.
+
+```bash
+git checkout prod && git pull
+git tag v1.3.0
+git push origin v1.3.0
+```
+
+Tags point at commits rather than branches, so tagging on `prod` works exactly like tagging anywhere else. From a tag you can open a GitHub Release to write up what changed.
 
 ## Database & migrations
 
@@ -67,9 +97,9 @@ For visual/color changes: merge one change at a time and confirm it looks correc
 
 What this means in practice:
 
-- **Feature branches never touch Neon.** Cloud Build deploys on push to `main` only, so un-merged work can't reach the production database.
+- **Only `prod` touches Neon.** Cloud Build deploys on push to `prod` only, so neither feature branches nor `main` can reach the production database.
 - **Local dev never touches Neon.** `docker-compose.yml` and `backend/.env` point `DATABASE_URL` at a local Postgres, so `docker-compose up`, scrapes, and migrations all run against throwaway local data. Experiment freely.
-- **Neon is touched only on merge to `main`.** On the first boot of the new Cloud Run revision, the app runs `alembic upgrade head` at startup (in `main.py`'s lifespan) against Neon. That is the moment a new migration actually executes in production.
+- **Neon is touched only on merge to `prod`.** On the first boot of the new Cloud Run revision, the app runs `alembic upgrade head` at startup (in `main.py`'s lifespan) against Neon. That is the moment a new migration actually executes in production.
 
 Because there is no separate staging copy of the data, a migration proves itself against real data only at deploy time. So:
 
@@ -83,12 +113,6 @@ Because there is no separate staging copy of the data, a migration proves itself
 git checkout -b feature/my-feature
 git push -u origin feature/my-feature
 
-# Check remote connections
-git remote -v
-
-# List all branches (local + remote)
-git branch -a
-
 # See what's on a branch that isn't in main
 git log origin/main..origin/feature/my-feature --oneline
 
@@ -96,6 +120,12 @@ git log origin/main..origin/feature/my-feature --oneline
 git checkout feature/my-feature
 git rebase origin/main
 git push --force-with-lease origin feature/my-feature
+
+# See what's merged into main but not yet shipped
+git log origin/prod..origin/main --oneline
+
+# Ship it — open the promotion PR
+gh pr create --base prod --head main --title "Release" --body "What's shipping..."
 
 # Clean up after a PR merges (GitHub deletes the remote branch itself)
 git fetch --prune
