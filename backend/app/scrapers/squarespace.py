@@ -49,8 +49,7 @@ class SquarespaceScraper(BaseScraper):
                 logger.warning(f"[Squarespace] Non-JSON response from {url}")
                 return []
 
-            # Squarespace can return events under different keys
-            items = data.get("items", data.get("upcoming", data.get("events", [])))
+            items = self._select_items(data)
 
             for item in items:
                 parsed = self._parse_event(item)
@@ -59,6 +58,20 @@ class SquarespaceScraper(BaseScraper):
 
         logger.info(f"[Squarespace] Found {len(events)} events for {self.venue_slug}")
         return events
+
+    @staticmethod
+    def _select_items(data: dict) -> list:
+        """Pick the event list out of a Squarespace JSON payload.
+
+        Which key holds the events depends on the site's template — Neptune's Parlour
+        uses "items", Boom Club uses "upcoming".
+
+        Chained with `or` rather than nested get() defaults on purpose: a default only
+        applies when the key is ABSENT, so a feed carrying "items": [] would take that
+        empty list and stop, never reaching the "upcoming" key holding its events. The
+        venue would silently report zero events with no error anywhere.
+        """
+        return data.get("items") or data.get("upcoming") or data.get("events") or []
 
     def _extract_description(self, item: dict) -> str:
         """Pull a plain-text description out of a Squarespace event body.

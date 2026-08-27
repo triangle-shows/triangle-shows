@@ -53,6 +53,35 @@ def _item(**overrides) -> dict:
     return item
 
 
+# --- _select_items ---
+
+class TestSelectItems:
+    def test_reads_the_items_key(self):
+        assert SquarespaceScraper._select_items({"items": [1, 2]}) == [1, 2]
+
+    def test_reads_the_upcoming_key(self):
+        """Boom Club's template has no 'items' key at all."""
+        assert SquarespaceScraper._select_items({"upcoming": [1]}) == [1]
+
+    def test_reads_the_events_key(self):
+        assert SquarespaceScraper._select_items({"events": [1]}) == [1]
+
+    def test_an_empty_items_key_does_not_mask_upcoming(self):
+        """The reason for `or` over a get() default — a default only fires when the
+        key is absent, so "items": [] used to win and hide the real events."""
+        data = {"items": [], "upcoming": [{"title": "MICROMACHINES"}]}
+        assert SquarespaceScraper._select_items(data) == [{"title": "MICROMACHINES"}]
+
+    def test_items_wins_when_both_are_populated(self):
+        assert SquarespaceScraper._select_items({"items": [1], "upcoming": [2]}) == [1]
+
+    def test_no_known_key_yields_an_empty_list(self):
+        assert SquarespaceScraper._select_items({"past": [1]}) == []
+
+    def test_all_keys_empty_yields_an_empty_list(self):
+        assert SquarespaceScraper._select_items({"items": [], "upcoming": []}) == []
+
+
 # --- _extract_description ---
 
 class TestExtractDescription:
