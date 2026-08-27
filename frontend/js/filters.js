@@ -3,9 +3,15 @@
 // filter params are sent. Venue, city, and search filters are applied locally.
 
 let venues = [];
+
+// Persisted toggle: hide non-live-music events (karaoke, trivia, theme nights,
+// recurring series) unless the visitor opts in. Default off = filtered.
+const INCLUDE_NON_MUSIC_KEY = "triangle-shows-include-non-music";
+
 let activeFilters = {
   search: "",
   forYou: false,
+  includeNonMusic: localStorage.getItem(INCLUDE_NON_MUSIC_KEY) === "1",
 };
 
 // Cache of all events from the API (plain JS objects). Populated once on initial
@@ -170,16 +176,30 @@ function toggleForYou() {
   applyAllFilters();
 }
 
+// Toggle whether non-live-music events (karaoke/trivia/theme nights/etc.) are shown.
+// Choice is persisted so it sticks across visits. Default (chip inactive) hides them.
+function toggleNonMusic() {
+  activeFilters.includeNonMusic = !activeFilters.includeNonMusic;
+  localStorage.setItem(INCLUDE_NON_MUSIC_KEY, activeFilters.includeNonMusic ? "1" : "0");
+  const chip = document.getElementById("chip-non-music");
+  if (chip) chip.classList.toggle("active", activeFilters.includeNonMusic);
+  applyAllFilters();
+}
+
 // Generate a webcal:// subscription URL from the currently-checked venues
 // and redirect to it, triggering the native Add Subscription dialog.
 function subscribeToVenues() {
   const allCbs  = [...document.querySelectorAll(".venue-checkbox input[type=checkbox]")];
   const checked = allCbs.filter(cb => cb.checked);
-  let path = "/feeds/events.ics";
+  const params = new URLSearchParams();
   if (checked.length > 0 && checked.length < allCbs.length) {
-    path += "?venue=" + checked.map(cb => cb.dataset.venue).join(",");
+    params.set("venue", checked.map(cb => cb.dataset.venue).join(","));
   }
-  window.location.href = `webcal://${window.location.host}${path}`;
+  // Match the feed to what the visitor is viewing: if they've opted into
+  // non-live-music events, include them in the subscription too.
+  if (activeFilters.includeNonMusic) params.set("include_non_music", "1");
+  const qs = params.toString();
+  window.location.href = `webcal://${window.location.host}/feeds/events.ics${qs ? "?" + qs : ""}`;
 }
 
 // Returns true if an event should be visible given the current filter state.
@@ -191,6 +211,11 @@ function _checkEventVisible(ev, venueMap) {
   // the locked city. Non-locked-city venues have no sidebar checkbox, so they
   // wouldn't be in venueMap and would otherwise pass through unchecked.
   if (SITE_CONFIG.city && props.venue_city !== SITE_CONFIG.city) return false;
+
+  // Non-live-music events (karaoke, trivia, theme nights, recurring series) are
+  // hidden unless the visitor opts in via the toggle. Only an explicit `false`
+  // hides — missing/true always shows, so unclassified data is never dropped.
+  if (!activeFilters.includeNonMusic && props.is_live_music === false) return false;
 
   // "For you" mode: show only Spotify-matched events, ignoring venue filters.
   if (activeFilters.forYou) {
@@ -389,6 +414,13 @@ function toggleSidebar() {
   sidebar.classList.toggle("open");
   if (backdrop) backdrop.classList.toggle("active");
 }
+
+// Reflect the persisted non-live-music toggle state on the (static) chip.
+// Scripts load with `defer`, so the DOM is ready when this runs.
+(function initNonMusicChip() {
+  const chip = document.getElementById("chip-non-music");
+  if (chip) chip.classList.toggle("active", activeFilters.includeNonMusic);
+})();
 
 // Initialize
 loadVenues();

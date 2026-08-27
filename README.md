@@ -157,6 +157,12 @@ See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for the branch/PR workflow if you
 
 ## License / contact me
 
-GNU General Public License v3. See [LICENSE](LICENSE).
+Functional Source License 1.1 with an Apache 2.0 future license ([FSL-1.1-ALv2](LICENSE)).
+Source-available: use, modify and redistribute it for any purpose except competing use, and
+each version becomes Apache 2.0 two years after its release.
+
+The license covers the code. It does not cover the event data the API serves — that is
+aggregated from venues' own public listings and from the Ticketmaster Discovery API, and
+remains the property of the respective venues and rights holders.
 
 Contact me at [@tyfi](https://bsky.app/profile/tyfi.bsky.social) on Bluesky, or you can email [mail@triangle-shows.net](mailto:mail@triangle-shows.net)

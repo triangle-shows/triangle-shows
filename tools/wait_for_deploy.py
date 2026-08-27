@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-Polls /api/health until the deployed git SHA matches the local HEAD commit.
+Polls /api/health until the deployed git SHA matches origin/prod's tip commit.
 
-Role: Developer utility — run manually after pushing to confirm a Cloud Run deploy
-has gone live. Not part of the runtime scrape or serving path.
-Requires: git available on PATH; network access to the deployed app's /api/health
-endpoint (which returns a JSON body with a "version" field set to the deployed SHA).
+Role: Developer utility — run manually after promoting main to prod to confirm the
+Cloud Run deploy has gone live. Not part of the runtime scrape or serving path.
+Requires: git available on PATH, run from inside a clone with a reachable 'origin'
+remote; network access to the deployed app's /api/health endpoint (which returns a
+JSON body with a "version" field set to the deployed SHA).
+
+The target is origin/prod's tip, fetched fresh on every run — not local HEAD. A
+promotion PR merges with a real merge commit rather than fast-forwarding, so prod's
+tip is a commit that never existed on main and a local checkout's HEAD (wherever it
+happens to be checked out) has no reliable relationship to what actually shipped.
 
 Usage:
     python tools/wait_for_deploy.py
@@ -13,7 +19,7 @@ Usage:
     python tools/wait_for_deploy.py --interval 15
     python tools/wait_for_deploy.py --timeout 300   # give up sooner
 
-Exits 0 when the deployed SHA matches local HEAD, 1 if the timeout passes first.
+Exits 0 when the deployed SHA matches origin/prod, 1 if the timeout passes first.
 """
 
 # --- Imports ---
@@ -40,16 +46,25 @@ USER_AGENT = "triangle-shows-deploy-watcher/1.0 (+https://github.com/triangle-sh
 
 # --- Helpers ---
 
-def get_local_sha():
-    """Return the full SHA of the local HEAD commit."""
+def get_prod_sha():
+    """Fetch origin/prod and return the full SHA of its current tip.
+
+    Fetches first rather than trusting whatever origin/prod the local repo already
+    has cached — this is meant to be run right after a promotion, so a stale local
+    view of prod would silently wait for the wrong commit.
+    """
     try:
+        subprocess.run(
+            ["git", "fetch", "origin", "prod"],
+            capture_output=True, text=True, check=True
+        )
         result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            ["git", "rev-parse", "origin/prod"],
             capture_output=True, text=True, check=True
         )
         return result.stdout.strip()
     except Exception as e:
-        print(f"ERROR: Could not get local git SHA: {e}", file=sys.stderr)
+        print(f"ERROR: Could not resolve origin/prod: {e}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -84,18 +99,18 @@ def get_deployed_version(url):
 # --- Main ---
 
 def main():
-    parser = argparse.ArgumentParser(description="Poll until deployed version matches local HEAD")
+    parser = argparse.ArgumentParser(description="Poll until deployed version matches origin/prod")
     parser.add_argument("--url", default=BASE_URL, help=f"Base URL (default: {BASE_URL})")
     parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL, help=f"Poll interval in seconds (default: {DEFAULT_INTERVAL})")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help=f"Give up after this many seconds (default: {DEFAULT_TIMEOUT})")
     args = parser.parse_args()
 
-    local_sha = get_local_sha()
-    short = local_sha[:7]  # abbreviated SHA for display
+    target_sha = get_prod_sha()
+    short = target_sha[:7]  # abbreviated SHA for display
 
     # flush on every print: stdout is block-buffered when redirected to a file,
     # so without this a backgrounded run shows no output until it exits.
-    print(f"Waiting for deploy of {short} to {args.url}", flush=True)
+    print(f"Waiting for deploy of {short} (origin/prod) to {args.url}", flush=True)
     print(f"Polling every {args.interval}s, giving up after {args.timeout}s — Ctrl+C to cancel\n", flush=True)
 
     start = datetime.now()
@@ -106,7 +121,7 @@ def main():
         ts = datetime.now().strftime("%H:%M:%S")
 
         # Compare with startswith in both directions to handle full vs. short SHA mismatches
-        if deployed.startswith(local_sha) or local_sha.startswith(deployed):
+        if deployed.startswith(target_sha) or target_sha.startswith(deployed):
             print(f"[{ts}] DEPLOYED  version={deployed[:7]}  ({elapsed:.0f}s)", flush=True)
             return 0
 

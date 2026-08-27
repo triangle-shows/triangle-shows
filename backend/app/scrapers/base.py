@@ -8,11 +8,49 @@ method, and uses ScrapedEvent.hash for deduplication before upserting to Postgre
 Requires: No env vars or external services — pure Python stdlib only.
 """
 import hashlib
+import html
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import date, time, datetime
 from typing import Optional
+from urllib.parse import unquote
+
+
+# --- Title normalization ---
+
+# A percent-escape: '%' followed by exactly two hex digits, e.g. '%26' for '&'.
+_PCT_ESCAPE = re.compile(r"%[0-9A-Fa-f]{2}")
+
+
+def clean_title(text: Optional[str]) -> Optional[str]:
+    """Decode escape sequences a source left in a human-readable title.
+
+    Venue sites hand us the same title in different encodings depending on which page
+    it came from — Shadowbox's listing page yields 'A &#038; B' while its detail page
+    yields 'A %26 B' for the same show. Because the dedup hash is built from the title,
+    two encodings of one title produce two database rows. Normalizing here means every
+    scraper hashes the same string, and users stop seeing raw escape codes.
+
+    Percent-decoding the whole string (rather than each escape separately) is what makes
+    multi-byte UTF-8 sequences like '%E2%80%99' come back as one character. The tradeoff
+    is that a literal '%' followed by two hex digits would be mangled; that does not
+    happen in practice in event titles, and leaving '%26' on screen is the worse failure.
+    """
+    if not text:
+        return text
+
+    # WordPress feeds sometimes double-escape ('&amp;#038;'), so unescape until stable.
+    for _ in range(3):
+        decoded = html.unescape(text)
+        if decoded == text:
+            break
+        text = decoded
+
+    if _PCT_ESCAPE.search(text):
+        text = unquote(text)
+
+    return re.sub(r"\s+", " ", text).strip()
 
 
 # --- ScrapedEvent Dataclass ---
@@ -40,6 +78,12 @@ class ScrapedEvent:
     age_restriction: Optional[str] = None
     description: Optional[str] = None
     source_url: Optional[str] = None
+
+    def __post_init__(self):
+        """Normalize the human-readable fields before anything hashes or stores them."""
+        self.name = clean_title(self.name)
+        self.artist = clean_title(self.artist)
+        self.support_artists = clean_title(self.support_artists)
 
     @property
     def hash(self) -> str:

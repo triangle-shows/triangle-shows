@@ -12,6 +12,12 @@
 #      gcloud secrets create triangle-shows-tm-api-key \
 #        --data-file=- <<< "your_ticketmaster_api_key"
 #
+#      # Admin subsite (/admin) — REQUIRED before enabling the admin secrets in the
+#      # deploy step below, or the deploy will fail on a missing secret:
+#      gcloud secrets create triangle-shows-admin-password \
+#        --data-file=- <<< "a-strong-admin-password"
+#      openssl rand -base64 32 | gcloud secrets create triangle-shows-session-secret --data-file=-
+#
 #   3. Grant the Cloud Build service account permission to deploy to Cloud Run
 #      and access secrets (in IAM Console, or):
 #      PROJECT_NUM=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
@@ -84,9 +90,28 @@ steps:
       - --min-instances=0
       - --max-instances=2
       - --timeout=300
+      # Origin gates (backend/app/tokens.py) are OFF until these env vars are set, and
+      # the boot log says which are live on every start. None of these values is a
+      # secret — a team domain, an application id, and a service-account email — so they
+      # belong here rather than in Secret Manager.
+      #
+      # Turn them on by extending the line below in place. gcloud rejects
+      # --set-env-vars alongside --update-env-vars, so append rather than adding a line:
+      #
+      #   - --set-env-vars=APP_ENV=production,ENABLE_SCHEDULER=false,LOG_LEVEL=INFO,CF_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com,CF_ACCESS_AUD=<aud-tag>,SCRAPE_ALLOWED_SERVICE_ACCOUNTS=<scheduler-sa-email>,SCRAPE_OIDC_AUDIENCE=<audience-on-the-scheduler-job>
+      #
+      # Enable the scrape gate first: its token already arrives, so it can be verified
+      # with nothing else in place. The /admin gate needs a Cloudflare Access application
+      # to exist first, or /admin becomes unreachable — which is safe (it fails closed)
+      # but not useful.
       - --set-env-vars=APP_ENV=production,ENABLE_SCHEDULER=false,LOG_LEVEL=INFO
       - --update-secrets=DATABASE_URL=triangle-shows-db-url:latest
       - --update-secrets=TICKETMASTER_API_KEY=triangle-shows-tm-api-key:latest
+      # Admin subsite — uncomment BOTH lines only after creating the two secrets
+      # above (see step 2). Without them the /admin login is disabled (fails closed),
+      # so leaving these commented is safe; the rest of the site is unaffected.
+      # - --update-secrets=ADMIN_PASSWORD=triangle-shows-admin-password:latest
+      # - --update-secrets=SESSION_SECRET=triangle-shows-session-secret:latest
 
 images:
   - $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/api:$COMMIT_SHA

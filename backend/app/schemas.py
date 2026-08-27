@@ -55,6 +55,7 @@ class EventResponse(BaseModel):
     age_restriction: Optional[str] = None
     description: Optional[str] = None
     source: str
+    is_live_music: bool = True  # False => karaoke/trivia/theme night/comedy/etc. (see app/classifier.py)
 
     # Denormalized venue fields — joined in the query so clients don't need
     # a separate /api/venues request to display venue info alongside events

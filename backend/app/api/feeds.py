@@ -33,6 +33,11 @@ router = APIRouter(prefix="/feeds", tags=["feeds"])
 @router.get("/events.ics", response_class=Response)
 async def get_ical_feed(
     venue: Optional[str] = Query(None, description="Comma-separated venue slugs. Omit for all venues."),
+    include_non_music: bool = Query(
+        False,
+        description="Include non-live-music events (karaoke, trivia, theme nights, etc.). "
+                    "Off by default so subscribers get live music only.",
+    ),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     """Live iCal subscription feed. Add to Apple Calendar, Google Calendar, or Outlook once;
@@ -41,6 +46,9 @@ async def get_ical_feed(
     today = date.today()
     # Only include upcoming events — no historical clutter in subscribers' calendars
     conditions = [Event.date >= today]
+    # Mirror the on-site calendar: hide non-live-music events unless opted in.
+    if not include_non_music:
+        conditions.append(Event.is_live_music.is_(True))
 
     needs_join = bool(venue)
     if venue:
