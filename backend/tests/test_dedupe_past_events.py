@@ -111,30 +111,67 @@ class TestRealDuplicates:
         assert len(groups[0]) == 3
 
 
-class TestEarlyAndLateShowsStaySeparate:
-    """Real pair at venue 10 on 2026-07-07, and the reason the rule changed.
+class TestASessionLabelIsNotDecisiveOnItsOwn:
+    """The clock decides, not the label — and this rule changed twice.
 
-    The first version stripped every bracketed token, which turned '[LATE] Sub Rosa' and
-    'Sub Rosa' into the same string — two performances on one night, one of which would
-    have been deleted. Found by dry-running against production, not by reasoning.
+    v1 stripped every bracketed token, so '[LATE] Sub Rosa' and 'Sub Rosa' normalized
+    identically. v2 treated a differing session label as proof of two performances, which
+    refused to merge them. Both were wrong, and the production rows say why: the pair has
+    identical doors (22:00), start (22:00) and price (18.0), and both rows were inserted
+    by one scrape batch nine microseconds apart. It is one show listed twice.
+
+    A real double bill has two start times, so that is what the rule tests.
     """
 
-    def test_a_late_show_is_not_merged_with_the_early_one(self):
-        rows = [row(3072, "Sub Rosa", venue_id=10, day="2026-07-07"),
-                row(3073, "[LATE] Sub Rosa", venue_id=10, day="2026-07-07")]
+    def test_the_real_sub_rosa_pair_merges(self):
+        rows = [
+            row(3072, "Sub Rosa", venue_id=10, day="2026-07-07",
+                doors_time="22:00:00", show_time="22:00:00", price_min=18.0),
+            row(3073, "[LATE] Sub Rosa", venue_id=10, day="2026-07-07",
+                doors_time="22:00:00", show_time="22:00:00", price_min=18.0),
+        ]
+        groups, _ = tool.find_groups(rows)
+        assert len(groups) == 1 and len(groups[0]) == 2
+
+    def test_the_real_away_with_words_pair_merges(self):
+        rows = [
+            row(2763, "away with words", venue_id=10, day="2026-07-07",
+                doors_time="19:00:00", show_time="19:30:00", price_min=13.0),
+            row(3103, "[Early] away with words", venue_id=10, day="2026-07-07",
+                doors_time="19:00:00", show_time="19:30:00", price_min=13.0),
+        ]
+        groups, _ = tool.find_groups(rows)
+        assert len(groups) == 1 and len(groups[0]) == 2
+
+    def test_a_genuine_double_bill_stays_separate(self):
+        """Different start times, so these really are two performances."""
+        rows = [
+            row(1, "Branford Marsalis (Early)", show_time="19:00:00"),
+            row(2, "Branford Marsalis (Late)", show_time="22:00:00"),
+        ]
         groups, _ = tool.find_groups(rows)
         assert groups == []
 
-    def test_an_early_marker_also_separates(self):
-        rows = [row(2763, "away with words", venue_id=10, day="2026-07-07"),
-                row(3103, "[Early] away with words", venue_id=10, day="2026-07-07")]
+    def test_doors_time_is_used_when_show_time_is_missing(self):
+        rows = [
+            row(1, "Branford Marsalis (Early)", doors_time="18:30:00"),
+            row(2, "Branford Marsalis (Late)", doors_time="21:30:00"),
+        ]
         groups, _ = tool.find_groups(rows)
         assert groups == []
 
-    def test_two_late_shows_still_merge(self):
-        """Compared as sets, so a marker shared by both rows is not a distinction — and a
-        band with 'Late' in its name is not accidentally protected from deduping."""
-        rows = [row(1, "[LATE] Sub Rosa"), row(2, "[LATE] Sub Rosa w/ Guest")]
+    def test_missing_times_fall_back_to_merging(self):
+        """Nothing to compare, and one relabeled listing is likelier than two shows. The
+        dry run is what puts this in front of a person."""
+        rows = [row(1, "Sub Rosa"), row(2, "[LATE] Sub Rosa")]
+        groups, _ = tool.find_groups(rows)
+        assert len(groups) == 1
+
+    def test_matching_labels_never_conflict(self):
+        rows = [
+            row(1, "[LATE] Sub Rosa", show_time="22:00:00"),
+            row(2, "[LATE] Sub Rosa w/ Guest", show_time="23:00:00"),
+        ]
         groups, _ = tool.find_groups(rows)
         assert len(groups) == 1
 
@@ -142,11 +179,6 @@ class TestEarlyAndLateShowsStaySeparate:
         rows = [row(1, "Late Night Drive Home"), row(2, "Late Night Drive Home w/ Support")]
         groups, _ = tool.find_groups(rows)
         assert len(groups) == 1
-
-    def test_set_numbers_separate(self):
-        rows = [row(1, "Branford Marsalis (1st Set)"), row(2, "Branford Marsalis (2nd Set)")]
-        groups, _ = tool.find_groups(rows)
-        assert groups == []
 
 
 class TestStatusMarkersAreStillStripped:

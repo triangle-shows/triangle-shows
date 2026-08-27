@@ -139,12 +139,38 @@ def normalize(name):
 
 
 def sessions(name):
-    """Session markers in a title, as a set — 'early', 'late', '2nd set' and so on.
-
-    Two rows are only ever merged when these match, so an early show and a late show on
-    one night stay separate.
-    """
+    """Session markers in a title, as a set — 'early', 'late', '2nd set' and so on."""
     return frozenset(m.group(0).lower().replace(" ", "") for m in _SESSION_MARKER.finditer(name or ""))
+
+
+def start_time(row):
+    """When the show actually starts, preferring show_time over doors."""
+    return row.get("show_time") or row.get("doors_time")
+
+
+def different_performances(a, b):
+    """True when two similarly-named rows look like genuinely separate performances.
+
+    The label alone is not enough to decide, and believing it was a mistake. Kings lists
+    the same show twice, once as 'Sub Rosa' and once as '[LATE] Sub Rosa', with identical
+    doors, start time and price — and both rows were inserted by a single scrape batch
+    nine microseconds apart. Treating the label as decisive refused to merge a pair that
+    is plainly one event.
+
+    So the clock decides. A differing session label matters only when the two rows
+    disagree about when the show starts; a real early-and-late double bill has two start
+    times. When either time is missing there is nothing to compare, and the same act at
+    the same venue on one night is far more often one relabeled listing than two shows —
+    so the rows are treated as mergeable and the dry run puts them in front of a person.
+    """
+    if sessions(a["name"]) == sessions(b["name"]):
+        return False
+
+    ta, tb = start_time(a), start_time(b)
+    if ta is None or tb is None:
+        return False
+
+    return ta != tb
 
 
 def is_cancelled(row):
@@ -207,8 +233,8 @@ def find_groups(rows, min_length=MIN_NORMALIZED_LENGTH):
                         continue
                     if not (a == b or a in b or b in a):
                         continue
-                    # An early show and a late show are different events.
-                    if sessions(row["name"]) != sessions(other["name"]):
+                    # A real early-and-late double bill has two start times.
+                    if different_performances(row, other):
                         continue
                     if min(len(a), len(b)) < min_length:
                         skipped_short.append((row, other))
