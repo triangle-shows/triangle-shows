@@ -27,6 +27,19 @@ router = APIRouter(prefix="/api/events", tags=["events"])
 
 # --- Helpers ---
 
+def _completeness(event: Event) -> tuple:
+    """Rank two listings of the same show: richer record wins, then most recently scraped.
+
+    Every component is total and the id breaks the last tie, so the winner does not depend
+    on the order the database returned rows in.
+    """
+    return (
+        bool(event.image_url) + bool(event.ticket_url) + (event.price_min is not None),
+        event.updated_at or datetime.min,
+        event.id,
+    )
+
+
 def _event_to_response(event: Event) -> EventResponse:
     """Map an ORM Event (with venue eagerly loaded) to the EventResponse schema."""
     return EventResponse(
@@ -110,26 +123,24 @@ async def get_fullcalendar_events(
     # unique() is required when using joinedload to collapse duplicate rows from the JOIN.
     events = result.unique().scalars().all()
 
-    # --- Cross-venue deduplication ---
-    # Cross-venue dedup: if the same artist performs on the same date at two
-    # different venues (e.g. listed on both a venue's own site and Ticketmaster),
-    # keep only the entry with the most complete metadata.
+    # --- Same-venue duplicate guard ---
+    # scrapers/manager.py is where duplicates are actually prevented; this is a display-time
+    # backstop covering the window between a venue editing an event and the next scrape.
+    #
+    # The key is scoped to the venue deliberately. An earlier version keyed only on
+    # (date, artist), which also collapsed listings at *different* venues — and two venues
+    # showing the same artist on one night is a moved or miscopied show, not a duplicate.
+    # Discarding one of them hid a real listing, and picked which venue survived from
+    # whichever row the database happened to return first.
     _dedup_best: dict[tuple, Event] = {}
-    _dedup_score: dict[tuple, int] = {}
     for event in events:
         label = event.artist or event.name
         # Normalize to lowercase alphanumeric so minor name differences don't prevent matching.
         norm = re.sub(r"[^a-z0-9]", "", label.lower())
-        key = (event.date, norm)
-        # Score based on how many key fields are populated; prefer richer records.
-        score = bool(event.image_url) + bool(event.ticket_url) + (event.price_min is not None)
-        if key not in _dedup_best:
+        key = (event.venue_id, event.date, norm)
+        incumbent = _dedup_best.get(key)
+        if incumbent is None or _completeness(event) > _completeness(incumbent):
             _dedup_best[key] = event
-            _dedup_score[key] = score
-        elif event.venue_id != _dedup_best[key].venue_id and score > _dedup_score[key]:
-            # Different venue but same artist/date — keep the more complete record.
-            _dedup_best[key] = event
-            _dedup_score[key] = score
     kept = {ev.id for ev in _dedup_best.values()}
     events = [e for e in events if e.id in kept]
 
