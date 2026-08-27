@@ -10,12 +10,7 @@ volume...". Confirmed against real Shadowbox Studio data.
 The fixture below is trimmed from a real Shadowbox event.
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from app.scrapers.mec import MECScraper  # noqa: E402
+from app.scrapers.mec import MECScraper
 
 
 # Trimmed from a real Shadowbox Studio JSON-LD Event block.
