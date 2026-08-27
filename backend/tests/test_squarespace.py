@@ -15,14 +15,9 @@ Two regressions covered here:
 The markup fixtures below are trimmed copies of what the two live feeds return.
 """
 
-import sys
 from datetime import date
-from pathlib import Path
 
-# Make `app` importable when running pytest from backend/.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from app.scrapers.squarespace import SquarespaceScraper  # noqa: E402
+from app.scrapers.squarespace import SquarespaceScraper
 
 
 # --- Fixtures drawn from the live feeds ---

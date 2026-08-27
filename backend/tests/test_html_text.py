@@ -10,12 +10,7 @@ Post-Body wrapper, which excerpt content is never wrapped in.
 Fixtures below are trimmed from real feeds where noted.
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from app.scrapers.html_text import clean_html_text  # noqa: E402
+from app.scrapers.html_text import clean_html_text
 
 
 # --- The core regressions ---

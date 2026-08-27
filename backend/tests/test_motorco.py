@@ -7,19 +7,14 @@ stop-at-the-first-quote pattern terminated there, storing a truncated title with
 a trailing backslash. A fetch of the live calendar showed 61 of 625 titles
 carrying such an escape.
 
-Run from the backend/ directory:  python -m pytest tests/test_motorco.py
+Run from the backend/ directory:  pytest tests/test_motorco.py
 The extraction is pure stdlib regex, so no DB, no network and no fixtures are
 needed — the scraper's own HTTP call is not exercised here.
 """
 
-import sys
 from datetime import date, timedelta
-from pathlib import Path
 
-# Make `app` importable when running pytest from backend/.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from app.scrapers.motorco import _EVENT_PATTERN, MotorcoScraper  # noqa: E402
+from app.scrapers.motorco import _EVENT_PATTERN, MotorcoScraper
 
 
 def _scraper() -> MotorcoScraper:
