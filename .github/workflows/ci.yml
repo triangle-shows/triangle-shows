@@ -1,8 +1,14 @@
 name: CI
 
 on:
+  # Every pull request, whatever it targets. The previous `branches: [main, prod]` filter
+  # meant a PR into a feature branch ran nothing at all, and reported "no checks" rather
+  # than a failure — so an unverified PR looked the same as a passing one.
+  #
+  # That shape comes up when a review-fix branch is opened against the feature branch it
+  # fixes rather than against main (PR #56 onto #36 was the first). Under the old filter
+  # the first CI run over that code happened only after it had already been merged once.
   pull_request:
-    branches: [main, prod]
 
 jobs:
   smoke-test:
