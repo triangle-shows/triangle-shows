@@ -11,21 +11,21 @@ main.py so these routes take priority over the catch-all.
 Requires: async PostgreSQL session, app.classifier, app.scrapers.manager, itsdangerous.
 """
 import secrets
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from pydantic import BaseModel
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.config import settings
 from app.database import get_session
 from app.models import Event, Venue, SeriesOverride
-from app.classifier import normalize_series_name, criteria_summary
+from app.classifier import normalize_series_name, criteria_summary, reclassify_floor
 from app.scrapers.manager import ScrapeManager
 from app.admin_ui import LOGIN_HTML, ADMIN_HTML
 
@@ -139,18 +139,34 @@ async def admin_rules() -> dict:
 async def admin_events(
     filter: str = Query("non_live", pattern="^(non_live|live|all)$"),
     search: Optional[str] = None,
-    limit: int = Query(200, ge=1, le=1000),
+    future_only: bool = Query(False, description="Hide events before today"),
+    show_approved: bool = Query(False, description="Include events already reviewed"),
+    limit: int = Query(1000, ge=1, le=5000),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """List upcoming events with classification + override state for moderation."""
-    conditions = [Event.date >= date.today()]
+    """List events with classification + override state for moderation.
+
+    Defaults to the same floor reclassification uses, so a series row shows every
+    event a series action will actually affect — listing only future dates would
+    understate scope. future_only narrows the view to today onward; it does not
+    change what a series action touches.
+    """
+    floor = date.today() if future_only else reclassify_floor()
+
+    # Split so the approved filter can be counted separately: `base` is everything the
+    # user asked for, `conditions` adds the approved exclusion actually applied.
+    base = [Event.date >= floor]
     if filter == "non_live":
-        conditions.append(Event.is_live_music.is_(False))
+        base.append(Event.is_live_music.is_(False))
     elif filter == "live":
-        conditions.append(Event.is_live_music.is_(True))
+        base.append(Event.is_live_music.is_(True))
     if search:
         term = f"%{search}%"
-        conditions.append(or_(Event.name.ilike(term), Event.artist.ilike(term)))
+        base.append(or_(Event.name.ilike(term), Event.artist.ilike(term)))
+
+    conditions = list(base)
+    if not show_approved:
+        conditions.append(Event.approved_at.is_(None))
 
     result = await session.execute(
         select(Event)
@@ -161,13 +177,47 @@ async def admin_events(
     )
     events = result.unique().scalars().all()
 
+    # Total matching rows, ignoring `limit`. Without this the response could only
+    # report how many rows came back, so a truncated page was indistinguishable from
+    # a complete one — the UI would say "1000 event(s)" whether that was all of them
+    # or the first 1000 of several thousand.
+    total = (
+        await session.execute(
+            select(func.count()).select_from(Event).where(and_(*conditions))
+        )
+    ).scalar_one()
+
+    # How many rows the approved filter is holding back, so that omission is visible
+    # too rather than silently shrinking the queue.
+    approved_hidden = 0
+    if not show_approved:
+        approved_hidden = (
+            await session.execute(
+                select(func.count()).select_from(Event)
+                .where(and_(*base, Event.approved_at.is_not(None)))
+            )
+        ).scalar_one()
+
     # Annotate each event with any matching series override.
     so_result = await session.execute(select(SeriesOverride))
     series = {(s.venue_id, s.normalized_name): s for s in so_result.scalars().all()}
 
+    # Series sizes across the whole reclassify range, deliberately ignoring both
+    # `future_only` and `limit`: a series action reaches every matching event, so the
+    # button label must count them all or it understates its own blast radius.
+    # Grouping happens in Python because normalize_series_name has no SQL equivalent.
+    span_rows = await session.execute(
+        select(Event.venue_id, Event.name).where(Event.date >= reclassify_floor())
+    )
+    series_sizes: dict[tuple[int, str], int] = {}
+    for venue_id, name in span_rows.all():
+        key = (venue_id, normalize_series_name(name))
+        series_sizes[key] = series_sizes.get(key, 0) + 1
+
     out = []
     for e in events:
-        so = series.get((e.venue_id, normalize_series_name(e.name)))
+        series_key = normalize_series_name(e.name)
+        so = series.get((e.venue_id, series_key))
         out.append({
             "id": e.id,
             "name": e.name,
@@ -178,10 +228,28 @@ async def admin_events(
             "is_live_music": e.is_live_music,
             "is_manual_override": e.is_manual_override,
             "classification_reason": e.classification_reason,
+            "is_approved": e.approved_at is not None,
+            # Detail shown when a row is expanded, to judge live-vs-not by hand.
+            # Descriptions are sparse (~10% of events), so the ticket link is often
+            # the only way to settle an ambiguous one.
+            "description": e.description,
+            "genre": e.genre,
+            "ticket_url": e.ticket_url,
+            "age_restriction": e.age_restriction,
+            # Exposed so the dashboard can collapse a series into one row using the
+            # same key a series override matches on — group and override stay in sync.
+            "series_key": series_key,
+            # How many events a series action on this row would actually affect.
+            "series_size": series_sizes.get((e.venue_id, series_key), 1),
             "series_override_id": so.id if so else None,
             "series_override_is_live": so.is_live_music if so else None,
         })
-    return {"events": out, "count": len(out)}
+    return {
+        "events": out,
+        "count": len(out),
+        "total": total,
+        "approved_hidden": approved_hidden,
+    }
 
 
 @router.post("/api/events/{event_id}/override", dependencies=[Depends(require_admin)])
@@ -197,6 +265,9 @@ async def set_override(
     event.is_live_music = body.is_live_music
     event.is_manual_override = True
     event.classification_reason = "manual"
+    # Setting the flag by hand *is* the review, so approve it too rather than asking
+    # the admin to confirm a decision they just made.
+    event.approved_at = datetime.utcnow()
     await session.commit()
     return {"ok": True, "id": event_id, "is_live_music": body.is_live_music}
 
@@ -211,10 +282,85 @@ async def clear_override(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     event.is_manual_override = False
+    # Dropping the override returns the event to unreviewed automatic classification,
+    # so the approval that came with the override goes too.
+    event.approved_at = None
     await session.commit()
     # Recompute now so the UI reflects the automatic result immediately.
     await ScrapeManager(session).reclassify_all()
     return {"ok": True, "id": event_id}
+
+
+@router.post("/api/events/{event_id}/approve", dependencies=[Depends(require_admin)])
+async def approve_event(
+    event_id: int,
+    series: bool = Query(False, description="Approve every event in this event's series"),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Mark a classification as reviewed and correct, hiding it from the default queue.
+
+    With series=true the event acts as a sample: every event sharing its venue and
+    normalized name is approved too. Classification is largely per-series, so
+    approving 20-odd recurring dates one at a time would be punishing.
+    """
+    event = await session.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    now = datetime.utcnow()
+    if not series:
+        event.approved_at = now
+        await session.commit()
+        return {"ok": True, "id": event_id, "approved": 1}
+
+    # Same key the series overrides and the dashboard's grouping use, so "approve
+    # series" covers exactly the rows the group row displays.
+    key = normalize_series_name(event.name)
+    rows = (await session.execute(
+        select(Event).where(
+            Event.venue_id == event.venue_id,
+            Event.date >= reclassify_floor(),
+        )
+    )).scalars().all()
+    approved = 0
+    for ev in rows:
+        if normalize_series_name(ev.name) == key and ev.approved_at is None:
+            ev.approved_at = now
+            approved += 1
+    await session.commit()
+    return {"ok": True, "id": event_id, "approved": approved}
+
+
+@router.post("/api/events/{event_id}/unapprove", dependencies=[Depends(require_admin)])
+async def unapprove_event(
+    event_id: int,
+    series: bool = Query(False, description="Un-approve every event in this event's series"),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Return an event (or its whole series) to the review queue."""
+    event = await session.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    if not series:
+        event.approved_at = None
+        await session.commit()
+        return {"ok": True, "id": event_id, "unapproved": 1}
+
+    key = normalize_series_name(event.name)
+    rows = (await session.execute(
+        select(Event).where(
+            Event.venue_id == event.venue_id,
+            Event.date >= reclassify_floor(),
+        )
+    )).scalars().all()
+    unapproved = 0
+    for ev in rows:
+        if normalize_series_name(ev.name) == key and ev.approved_at is not None:
+            ev.approved_at = None
+            unapproved += 1
+    await session.commit()
+    return {"ok": True, "id": event_id, "unapproved": unapproved}
 
 
 @router.get("/api/series", dependencies=[Depends(require_admin)])
