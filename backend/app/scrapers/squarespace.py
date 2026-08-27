@@ -15,6 +15,7 @@ from bs4 import BeautifulSoup
 import httpx
 
 from app.scrapers.base import BaseScraper, ScrapedEvent, BROWSER_HEADERS
+from app.scrapers.html_text import clean_html_text
 
 # --- Module-level setup ---
 
@@ -49,8 +50,7 @@ class SquarespaceScraper(BaseScraper):
                 logger.warning(f"[Squarespace] Non-JSON response from {url}")
                 return []
 
-            # Squarespace can return events under different keys
-            items = data.get("items", data.get("upcoming", data.get("events", [])))
+            items = self._select_items(data)
 
             for item in items:
                 parsed = self._parse_event(item)
@@ -59,6 +59,55 @@ class SquarespaceScraper(BaseScraper):
 
         logger.info(f"[Squarespace] Found {len(events)} events for {self.venue_slug}")
         return events
+
+    @staticmethod
+    def _select_items(data: dict) -> list:
+        """Pick the event list out of a Squarespace JSON payload.
+
+        Which key holds the events depends on the site's template — Neptune's Parlour
+        uses "items", Boom Club uses "upcoming".
+
+        Chained with `or` rather than nested get() defaults on purpose: a default only
+        applies when the key is ABSENT, so a feed carrying "items": [] would take that
+        empty list and stop, never reaching the "upcoming" key holding its events. The
+        venue would silently report zero events with no error anywhere.
+        """
+        return data.get("items") or data.get("upcoming") or data.get("events") or []
+
+    def _extract_description(self, item: dict, title: str) -> Optional[str]:
+        """Pull a human-readable description out of a Squarespace event.
+
+        Two shapes of source content, told apart by which field they came from:
+
+        - `excerpt`, when present, is a genuinely separate summary field: bare `<p>`
+          tags with real content, never a repeat of the title (confirmed against
+          Boom Club, which fills in excerpts but leaves `body` looking like an empty
+          Post Body block). Its paragraphs are kept as-is.
+        - `body` is the Post Body WYSIWYG editor's output, wrapped in Squarespace's
+          layout markup, and its first paragraph always repeats the event's own
+          title (confirmed against Neptune's Parlour) — dropped via
+          `drop_first_paragraph_if` rather than a positional skip, so it only ever
+          removes an actual title repeat and never a paragraph of real content that
+          happens to come first (#13, #17).
+
+        An event whose body is empty layout scaffolding with no readable text
+        returns None — that is never a reason to discard the event itself (#35).
+        """
+        try:
+            excerpt = item.get("excerpt")
+            if excerpt:
+                # A real excerpt is never dropped for matching the title — only
+                # body's known title-repeat paragraph is.
+                return clean_html_text(excerpt)
+            return clean_html_text(item.get("body") or "", drop_first_paragraph_if=title)
+        except Exception as e:
+            # Description is optional metadata. Losing it must never lose the event, so
+            # this stays outside the caller's try block for the required fields.
+            logger.warning(
+                f"[Squarespace] {self.venue_slug}: could not read description for "
+                f"{item.get('title', '?')!r}: {e}"
+            )
+            return None
 
     def _parse_event(self, item: dict) -> Optional[ScrapedEvent]:
         """Parse a single Squarespace event dict into a ScrapedEvent, returning None on failure."""
@@ -90,13 +139,7 @@ class SquarespaceScraper(BaseScraper):
             # End date (usually same day)
             end_ts = item.get("endDate")
 
-            # Extract body/description — fall back to raw body if no excerpt
-            soup = BeautifulSoup(item.get("excerpt", "") or item.get("body", ""), "lxml")
-            description = ''
-            html_content = soup.select("div.sqs-html-content")
-            # start at 1 bc [0] is just the title again
-            for index in range(1, len(html_content[0].contents)):
-                description += html_content[0].contents[index].text + "\r\n"
+            description = self._extract_description(item, title)
             # Image
             image_url = None
             if item.get("assetUrl"):
@@ -147,5 +190,10 @@ class SquarespaceScraper(BaseScraper):
                 source_url=source_url,
             )
         except Exception as e:
-            logger.warning(f"[Squarespace] Failed to parse event: {e}")
+            # Name the venue and the event: the previous message identified neither,
+            # which is why four silently dropped Boom Club events went unnoticed.
+            logger.warning(
+                f"[Squarespace] {self.venue_slug}: failed to parse "
+                f"{item.get('title', '?')!r}: {e}"
+            )
             return None
