@@ -1,5 +1,15 @@
 // API configuration
-const API_BASE = window.location.origin;
+//
+// Frontend-only preview escape hatch. `python -m http.server 8080` inside frontend/ serves
+// the static files with no API behind them, so port 8080 on localhost reads from
+// production instead. Scoped to that exact port on purpose: the docker-compose stack
+// serves the real app on :8000 and must keep talking to its own local API.
+// CORS permits this — allow_origins is "*" with allow_credentials off.
+const API_BASE =
+  (location.hostname === "localhost" || location.hostname === "127.0.0.1") &&
+  location.port === "8080"
+    ? "https://triangle-shows.net"
+    : window.location.origin;
 
 // Spotify — paste your Client ID from https://developer.spotify.com/dashboard
 // Register redirect URIs: https://triangle-shows.org and http://localhost:8000

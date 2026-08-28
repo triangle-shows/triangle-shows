@@ -8,7 +8,13 @@
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23f0922e'/%3E%3C/svg%3E">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@900&family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- Space Mono: identity layer (ASCII title, labels, chrome).
+       IBM Plex Mono: data layer (event titles, venue lines, list view) - drawn for
+       interface density, so it holds shape at 11-13px where Space Mono's tight counters
+       fill in. Silkscreen: true bitmap face, currently used only for the equalizer's
+       week ruler; loaded so pixel treatments can be tried elsewhere without a round trip. -->
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Orbitron:wght@900&family=Silkscreen:wght@400;700&family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
   <link rel="stylesheet" href="/css/styles.css">
 
@@ -61,6 +67,17 @@
       <!-- Search -->
       <div class="filter-section search-wrapper">
         <input type="text" id="search-input" placeholder="search artists/events...">
+      </div>
+
+      <!-- Night-density equalizer. Sits above the filters it responds to, so changing a
+           filter and watching the bars redraw reads as one motion. -->
+      <div class="filter-section eq-section">
+        <div class="filter-label">Next 14 nights</div>
+        <div class="eq-strip">
+          <div class="equalizer" id="equalizer" role="img" aria-label="Show density for the next 14 nights"></div>
+          <div class="eq-ruler" aria-hidden="true"><span>today</span><span>+1wk</span></div>
+        </div>
+        <p class="eq-readout" id="eq-readout" aria-live="polite"></p>
       </div>
 
       <!-- City Filter -->
@@ -151,6 +168,8 @@
   <script defer src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
 
   <!-- App JS -->
+  <script defer src="/js/design.js"></script>
+  <script defer src="/js/equalizer.js"></script>
   <script defer src="/js/config.js"></script>
   <script defer src="/js/filters.js"></script>
   <script defer src="/js/modal.js"></script>
