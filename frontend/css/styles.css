@@ -31,6 +31,15 @@
      contrast in an off-white. */
   --tile-ink:     color-mix(in srgb, white 62%, var(--text));
   --tile-ink-dim: color-mix(in srgb, white 20%, var(--text));
+
+  /* Hearted shows in the equalizer. Deliberately off-palette -- it is the one thing in
+     the strip that is not "how busy is that night", so it should not be a shade of the
+     accent. Matches the heart on an event tile (#ff8fa8), which is where the association
+     is learned. Overridden below for wisteria, where pink on pink says nothing, and
+     darkened for light mode, where the bright pink measures 2.0:1 on warm paper and
+     graphics want 3:1. */
+  --eq-fav:       #ff8fa8;
+  --eq-fav-hover: #ffb3c4;
   --bg:           #1a1008;
   --surface:      #241609;
   --surface2:     #2e1d0c;
@@ -161,6 +170,30 @@ html[data-mode="light"][data-palette="wisteria"] {
   --accent-hover: #6a1888;
   --accent-bg:    rgba(136,40,168,0.10);
   --today-bg:     rgba(136,40,168,0.06);
+}
+
+/* === Equalizer favorite color =============================================
+   Order matters and the specificities are deliberate. The two single-attribute rules
+   are both (0,1,1), so wisteria is written second to win in dark mode; the compound
+   rule is (0,2,1) and so still wins for wisteria + light. */
+
+/* Light mode: #ff8fa8 measures 2.0:1 against the warm-paper background, under the 3:1
+   graphics floor. This one is 3.66:1 and still reads as the same pink. */
+html[data-mode="light"] {
+  --eq-fav:       #d94f74;
+  --eq-fav-hover: #b83a5c;
+}
+
+/* Wisteria is a pink-purple palette, so a pink overlay would say nothing. Soft sky blue
+   is the opposite side of the wheel and stays gentle rather than alarming. */
+html[data-palette="wisteria"] {
+  --eq-fav:       #8ad5f0;
+  --eq-fav-hover: #b0e6f8;
+}
+
+html[data-mode="light"][data-palette="wisteria"] {
+  --eq-fav:       #1f7fa8;
+  --eq-fav-hover: #12617f;
 }
 
 /* Durham Bulls light: warm desaturated brown bg, navy text */
@@ -1338,50 +1371,54 @@ html[data-tiles="gutter"] .fc .fc-list-event .ev {
    Accent-colored bloom on identity text only. Never applied to event text, where it
    would undo the readability work above. */
 
+/* Four layers rather than two: a tight hot core, a bright inner bloom, then two wide
+   falloffs. Real phosphor bloom is a steep core with a long tail, and stacking the radii
+   gets closer to that than turning one shadow up would -- a single wide shadow at high
+   opacity just goes muddy. */
 html[data-glow="on"] .ascii-title {
-  text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 55%, transparent),
-               0 0 14px color-mix(in srgb, var(--accent) 25%, transparent);
+  text-shadow: 0 0 2px  color-mix(in srgb, var(--accent) 85%, transparent),
+               0 0 9px  color-mix(in srgb, var(--accent) 75%, transparent),
+               0 0 22px color-mix(in srgb, var(--accent) 45%, transparent),
+               0 0 42px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 html[data-glow="on"] .site-title,
 html[data-glow="on"] .site-subtitle,
 html[data-glow="on"] .fc .fc-toolbar-title,
 html[data-glow="on"] .filter-label,
 html[data-glow="on"] .ls-text {
-  text-shadow: 0 0 5px color-mix(in srgb, var(--accent) 40%, transparent);
+  text-shadow: 0 0 2px  color-mix(in srgb, var(--accent) 60%, transparent),
+               0 0 8px  color-mix(in srgb, var(--accent) 62%, transparent),
+               0 0 18px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 html[data-glow="on"] .cursor,
 html[data-glow="on"] .ls-cursor {
-  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 70%, transparent);
+  box-shadow: 0 0 4px  color-mix(in srgb, var(--accent) 90%, transparent),
+              0 0 12px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
-/* Light mode gets a much weaker bloom: glow on a paper-white ground reads as a printing
-   error rather than as phosphor. */
+/* Footer. Radius is kept tight here on purpose: bloom has to scale with type size, and
+   the wide falloff that reads as phosphor on the 14px ASCII art smears 10px italic into
+   mush. Same effect, sized for the text it sits on. */
+html[data-glow="on"] .site-credit,
+html[data-glow="on"] .site-credit a {
+  text-shadow: 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent),
+               0 0 9px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* Light mode stays much weaker: bloom on a paper-white ground reads as a printing error
+   rather than as phosphor, because there is no dark surround for light to spill into. */
 html[data-glow="on"][data-mode="light"] .ascii-title {
-  text-shadow: 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+  text-shadow: 0 0 4px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+html[data-glow="on"][data-mode="light"] .site-credit,
+html[data-glow="on"][data-mode="light"] .site-credit a {
+  text-shadow: 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 
-/* ── CRT texture: scanlines ──────────────────────────────────────────────────
-   Chrome surfaces only — the header and the sidebar. Deliberately never over the
-   calendar grid or event tiles, where a 50% duty cycle over 11px text is exactly the
-   kind of decoration that costs legibility. */
-
-html[data-scanlines="on"] .app-header::after,
-html[data-scanlines="on"] .sidebar::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 3;
-  background: repeating-linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--bg) 55%, transparent) 0px,
-    color-mix(in srgb, var(--bg) 55%, transparent) 1px,
-    transparent 1px,
-    transparent 3px
-  );
-}
-html[data-scanlines="on"] .sidebar { position: relative; }
+/* Scanlines were tried here and cut: a 1-in-3 duty cycle lands on the same scale as the
+   ASCII art's own strokes and the 11px sidebar text, so it read as interference rather
+   than as texture. The glow above carries the CRT reference on its own. */
 
 
 /* ── Night-density equalizer ─────────────────────────────────────────────────
@@ -1432,12 +1469,34 @@ html[data-scanlines="on"] .sidebar { position: relative; }
 .eq-cell.on  { background: var(--accent); }
 .eq-cell.cap { background: var(--accent-hover); }
 
+/* Hearted shows fill the base of each bar in --eq-fav, so a bar reads bottom-up as
+   "this many are mine, this many more are on". Declared after .cap so a bar that is
+   entirely hearted stays pink rather than taking the accent cap color.
+
+   The inset rim is not decoration. Pink and the phosphor palette's green sit at almost
+   identical luminance (1.02:1), which is the red-green colorblind failure case exactly --
+   they would flatten to the same grey. The rim makes hearted cells legible as a texture
+   rather than only as a hue. Position carries it too: hearted cells are always the
+   contiguous base of a bar, and the readout and aria-label both say "N hearted" in
+   words, so the color is the third cue rather than the only one. */
+.eq-cell.fav,
+.eq-cell.fav.cap {
+  background: var(--eq-fav);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 45%, transparent);
+}
+
 .eq-bar:hover  .eq-cell.on,
 .eq-bar:focus-visible .eq-cell.on,
 .eq-bar.is-active .eq-cell.on { background: var(--accent-hover); }
 
 .eq-bar:hover .eq-cell,
 .eq-bar.is-active .eq-cell { background: color-mix(in srgb, var(--accent) 22%, var(--surface2)); }
+
+/* Must come after the .on hover rules above. Both are (0,4,0), so order decides, and
+   written any earlier the hearted cells would flip to the accent color on hover. */
+.eq-bar:hover .eq-cell.fav,
+.eq-bar:focus-visible .eq-cell.fav,
+.eq-bar.is-active .eq-cell.fav { background: var(--eq-fav-hover); }
 
 .eq-bar:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 

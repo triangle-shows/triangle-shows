@@ -22,6 +22,11 @@ function toggleFavorite(eventId, eventData) {
   saveFavorites(favs);
   _refreshHeartUI(eventId, !!favs[eventId]);
   updateBottomBar();
+  // Repaint the equalizer so the hearted portion of each bar tracks the change
+  // immediately, rather than waiting for the next calendar refetch.
+  if (window.Equalizer && typeof window.Equalizer.refresh === "function") {
+    window.Equalizer.refresh();
+  }
 }
 
 function _refreshHeartUI(eventId, hearted) {

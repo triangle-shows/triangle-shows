@@ -158,10 +158,11 @@
   // on <html> and persists it. Remove this block, its markup, and the [data-tiles="gutter"]
   // / [data-glow] / [data-scanlines] rules once the direction is settled.
 
+  // Glow defaults on -- it was kept after the comparison pass. Scanlines were dropped
+  // outright rather than defaulted off, so no stale attribute is left on <html>.
   const LAB_KEYS = {
-    tiles:      { attr: "data-tiles",      storage: "ts-lab-tiles",      fallback: "fill" },
-    glow:       { attr: "data-glow",       storage: "ts-lab-glow",       fallback: "off"  },
-    scanlines:  { attr: "data-scanlines",  storage: "ts-lab-scanlines",  fallback: "off"  },
+    tiles: { attr: "data-tiles", storage: "ts-lab-tiles", fallback: "fill" },
+    glow:  { attr: "data-glow",  storage: "ts-lab-glow",  fallback: "on"   },
   };
 
   function _read(key) {

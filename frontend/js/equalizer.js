@@ -48,11 +48,15 @@
 
   const DAY_NAMES = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
-  function _label(date, count) {
+  function _label(date, count, favCount) {
     const day = DAY_NAMES[date.getDay()];
     const num = date.getDate();
     if (count === 0) return day + " " + num + " · nothing on";
-    return day + " " + num + " · " + count + (count === 1 ? " show" : " shows");
+    const shows = count + (count === 1 ? " show" : " shows");
+    // Favourites are colour-coded in the bar; say it in words too, so the readout and the
+    // screen-reader label carry the same information the color does.
+    const hearted = favCount ? ", " + favCount + " hearted" : "";
+    return day + " " + num + " · " + shows + hearted;
   }
 
   // --- Build ---
@@ -88,7 +92,7 @@
         cells.push(cell);
       }
 
-      const entry = { el: bar, cells: cells, date: date, key: _key(date), count: 0 };
+      const entry = { el: bar, cells: cells, date: date, key: _key(date), count: 0, favCount: 0 };
       _bars.push(entry);
 
       bar.addEventListener("mouseenter", function () { _showReadout(entry); });
@@ -106,7 +110,7 @@
   // --- Interaction ---
 
   function _showReadout(entry) {
-    if (_readout) _readout.textContent = _label(entry.date, entry.count);
+    if (_readout) _readout.textContent = _label(entry.date, entry.count, entry.favCount);
     _bars.forEach(function (b) { b.el.classList.toggle("is-active", b === entry); });
   }
 
@@ -142,7 +146,9 @@
   function _summary() {
     const total = _bars.reduce(function (sum, b) { return sum + b.count; }, 0);
     if (total === 0) return "nothing in the next two weeks";
-    return total + (total === 1 ? " show" : " shows") + " in the next two weeks";
+    const fav = _bars.reduce(function (sum, b) { return sum + b.favCount; }, 0);
+    return total + (total === 1 ? " show" : " shows") + " in the next two weeks" +
+           (fav ? " · " + fav + " hearted" : "");
   }
 
   /**
@@ -156,6 +162,9 @@
     if (!_root || _bars.length === 0) return;
 
     const counts = Object.create(null);
+    const favCounts = Object.create(null);
+    const hasFavorites = typeof isFavorited === "function";
+
     _lastData.forEach(function (ev) {
       // Accept both the raw feed shape (start: "YYYY-MM-DD") and a Date, so this works
       // whether it is handed cached JSON or live calendar objects.
@@ -163,11 +172,15 @@
       if (!raw) return;
       const key = typeof raw === "string" ? raw.slice(0, 10) : _key(raw);
       counts[key] = (counts[key] || 0) + 1;
+      if (hasFavorites && ev.id !== undefined && isFavorited(ev.id)) {
+        favCounts[key] = (favCounts[key] || 0) + 1;
+      }
     });
 
     let peak = 0;
     _bars.forEach(function (bar) {
       bar.count = counts[bar.key] || 0;
+      bar.favCount = favCounts[bar.key] || 0;
       if (bar.count > peak) peak = bar.count;
     });
 
@@ -183,15 +196,25 @@
         lit = Math.max(1, Math.round((bar.count / scale) * CELLS));
       }
 
+      // Hearted shows occupy the base of the bar, so a bar reads bottom-up as "this many
+      // are mine, this many more are on". Rounded up and capped at the lit height: one
+      // favourite among five shows should be visibly one cell, not rounded away to none.
+      let favLit = 0;
+      if (bar.favCount > 0) {
+        favLit = Math.min(lit, Math.max(1, Math.round((bar.favCount / bar.count) * lit)));
+      }
+
       bar.cells.forEach(function (cell, index) {
         // Cell 0 is the bottom of the bar: DOM order is top-down, so invert.
         const height = CELLS - index;
-        cell.classList.toggle("on", height <= lit);
+        const isOn = height <= lit;
+        cell.classList.toggle("on", isOn);
+        cell.classList.toggle("fav", isOn && height <= favLit);
         cell.classList.toggle("cap", height === lit && lit > 0);
       });
 
       bar.el.classList.toggle("is-empty", bar.count === 0);
-      bar.el.setAttribute("aria-label", _label(bar.date, bar.count));
+      bar.el.setAttribute("aria-label", _label(bar.date, bar.count, bar.favCount));
     });
 
     if (_root) _root.setAttribute("aria-label", _summary());
