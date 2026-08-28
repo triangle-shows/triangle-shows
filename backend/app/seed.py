@@ -285,7 +285,15 @@ VENUES = [
         "website": "https://carolinatheatre.org/",
         "scraper_type": "carolina_theatre",
         "scraper_config": {"url": "https://carolinatheatre.org/events/"},
-        "color": "#F5D765",  # yellow (Durham)
+        # Was #F5D765, a bright yellow that sat outside the jewel-tone family every other
+        # venue uses and failed contrast in both modes (1.42:1 white-on-tile in dark,
+        # ~1.2:1 as tile text in light). Citrine keeps the warm identity, joins the
+        # palette, and measures 7.11:1 against white -- clearing the normalizer in
+        # frontend/js/design.js on its own rather than being clamped by it.
+        # Hue is 56 deg rather than a browner gold: that puts ~30 deg between it and
+        # Stanczyks' espresso (#5a3a20), the nearest warm tone and also a Durham venue,
+        # so the two do not read alike when they land in the same week.
+        "color": "#5f5a0b",  # citrine (Durham)
     },
 ]
 

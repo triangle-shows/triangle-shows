@@ -8,6 +8,32 @@
 /* === Variables === */
 :root {
   --sidebar-width: 270px;
+
+  /* Type scale. Replaces 19 ad-hoc rem values that included 0.62 / 0.63 / 0.65 -- sizes
+     nobody can tell apart but every one of which had to be maintained. Six steps, named
+     by role, on whole pixels so a monospace grid stays crisp. */
+  --fs-2xs: 0.625rem;   /* 10px — micro labels only, never running text */
+  --fs-xs:  0.6875rem;  /* 11px — venue line, chips, buttons */
+  --fs-sm:  0.75rem;    /* 12px — utility text */
+  --fs-md:  0.8125rem;  /* 13px — event titles, body */
+  --fs-lg:  0.9375rem;  /* 15px — toolbar title, modal headings */
+  --fs-xl:  1.125rem;   /* 18px — modal title */
+
+  /* Two font stacks with different jobs: Space Mono carries the identity, IBM Plex Mono
+     carries the data. Plex holds its counters at 11-13px where Space Mono's fill in. */
+  --font-identity: 'Space Mono', ui-monospace, monospace;
+  --font-data:     'IBM Plex Mono', 'Space Mono', ui-monospace, monospace;
+  --font-pixel:    'Silkscreen', 'Space Mono', ui-monospace, monospace;
+
+
+  /* Hearted shows in the equalizer. Deliberately off-palette -- it is the one thing in
+     the strip that is not "how busy is that night", so it should not be a shade of the
+     accent. Matches the heart on an event tile (#ff8fa8), which is where the association
+     is learned. Overridden below for wisteria, where pink on pink says nothing, and
+     darkened for light mode, where the bright pink measures 2.0:1 on warm paper and
+     graphics want 3:1. */
+  --eq-fav:       #ff8fa8;
+  --eq-fav-hover: #ffb3c4;
   --bg:           #1a1008;
   --surface:      #241609;
   --surface2:     #2e1d0c;
@@ -138,6 +164,30 @@ html[data-mode="light"][data-palette="wisteria"] {
   --accent-hover: #6a1888;
   --accent-bg:    rgba(136,40,168,0.10);
   --today-bg:     rgba(136,40,168,0.06);
+}
+
+/* === Equalizer favorite color =============================================
+   Order matters and the specificities are deliberate. The two single-attribute rules
+   are both (0,1,1), so wisteria is written second to win in dark mode; the compound
+   rule is (0,2,1) and so still wins for wisteria + light. */
+
+/* Light mode: #ff8fa8 measures 2.0:1 against the warm-paper background, under the 3:1
+   graphics floor. This one is 3.66:1 and still reads as the same pink. */
+html[data-mode="light"] {
+  --eq-fav:       #d94f74;
+  --eq-fav-hover: #b83a5c;
+}
+
+/* Wisteria is a pink-purple palette, so a pink overlay would say nothing. Soft sky blue
+   is the opposite side of the wheel and stays gentle rather than alarming. */
+html[data-palette="wisteria"] {
+  --eq-fav:       #8ad5f0;
+  --eq-fav-hover: #b0e6f8;
+}
+
+html[data-mode="light"][data-palette="wisteria"] {
+  --eq-fav:       #1f7fa8;
+  --eq-fav-hover: #12617f;
 }
 
 /* Durham Bulls light: warm desaturated brown bg, navy text */
@@ -582,11 +632,16 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
 
 /* === Calendar === */
 .calendar-container {
-  padding: 1.1rem 1.25rem;
+  /* Top spacing is a margin on .fc rather than padding here. A sticky element pins to the
+     padding box, so with padding-top the toolbar stopped 1.1rem below the container's top
+     edge and scrolling rows showed through the strip above it. As a margin the same gap
+     scrolls away with the content, and the toolbar pins flush. */
+  padding: 0 1.25rem 1.1rem;
   background: var(--bg);
   overflow-y: auto;
   height: 100%;
 }
+.calendar-container > .fc { margin-top: 1.1rem; }
 
 /* FullCalendar overrides */
 .fc {
@@ -699,19 +754,34 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   padding: 2px 32px 2px 4px; /* right padding reserves space for heart + hide */
   overflow: hidden;
 }
+/* Event title.
+   Was Space Mono 700 at 12px, which is the readability complaint that started this branch.
+   Bold works against a monospace at this size: Space Mono's counters are tight to begin
+   with, and at 12px on a saturated field they close up, so the letterforms lose the shapes
+   that tell them apart. The fix is the opposite of the instinct -- less weight, slightly
+   more size, and a little tracking to open the rhythm. */
 .ev-title {
-  font-family: 'Space Mono', monospace;
-  font-size: 0.75rem;
-  font-weight: 700;
+  font-family: var(--font-data);
+  font-size: var(--fs-md);       /* 13px, up from 12 */
+  font-weight: 500;              /* down from 700 */
+  letter-spacing: 0.005em;
+  line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: #fff;
+  color: var(--text);
 }
+/* Venue line.
+   Was 10.1px at 78% alpha. Two problems: 10px is under the floor for a mono, and
+   compositing white over 22 different saturated hues shifted the result differently on
+   every tile. Now 11px in a solid mixed ink, so it reads the same everywhere. */
 .ev-venue {
-  font-family: 'Space Mono', monospace;
-  font-size: 0.63rem;
-  color: rgba(255,255,255,0.78);
+  font-family: var(--font-data);
+  font-size: var(--fs-xs);       /* 11px, up from ~10.1 */
+  font-weight: 400;
+  letter-spacing: 0.015em;
+  line-height: 1.3;
+  color: color-mix(in srgb, var(--muted) 60%, var(--text));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1129,14 +1199,10 @@ html[data-mode="light"] .fc-list-event .ev-heart { color: rgba(0,0,0,0.35); }
 html[data-mode="light"] .fc-list-event .ev-hide  { color: rgba(0,0,0,0.25); }
 html[data-mode="light"] .venue-hide-btn          { color: rgba(0,0,0,0.35); }
 
-/* Light mode: daygrid event chips — light bg + accent text so venue colors aren't washed */
-html[data-mode="light"] .fc .fc-daygrid-event {
-  background-color: var(--surface2) !important;
-}
-html[data-mode="light"] .fc-daygrid-event .ev-title { color: var(--venue-color, var(--accent)); }
-html[data-mode="light"] .fc-daygrid-event .ev-venue { color: var(--muted); }
-html[data-mode="light"] .fc-daygrid-event .ev-heart { color: rgba(0,0,0,0.35); }
-html[data-mode="light"] .fc-daygrid-event .ev-hide  { color: rgba(0,0,0,0.3);  }
+/* Light mode needs nothing special for daygrid events now. The block that used to live
+   here put them on --surface2 and colored the title with the venue color, to rescue the
+   filled tile in light mode. The gutter treatment already does that in both modes, and
+   these rules were (0,3,1) -- high enough to override it. */
 
 /* === Spotify === */
 .spotify-connect-wrap { margin-top: 0.55rem; }
@@ -1249,3 +1315,277 @@ html[data-mode="light"] .fc-daygrid-event .ev-hide  { color: rgba(0,0,0,0.3);  }
 }
 .site-credit a { color: var(--accent); text-decoration: none; }
 .site-credit a:hover { color: var(--accent-hover); }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   VISUAL REFRESH — feature/visual-refresh
+   Tile treatments, CRT texture, and the night-density equalizer.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Tile treatment: gutter ──────────────────────────────────────────────────
+   Alternative to the filled tile. The venue color moves to a 3px left rule and the
+   tile sits on the surface, so event text is never on a saturated field and contrast
+   is identical for all 22 venues. Reads like a log gutter or a diff marker, which
+   suits the terminal frame.
+
+   Specificity note: the light-mode rules further up are (0,3,1). These carry .fc as
+   well to reach (0,4,1) so they win in both modes rather than only in dark.
+   background-color needs !important because FullCalendar writes the venue color to
+   the element as an inline style. */
+
+.fc .fc-daygrid-event {
+  background-color: var(--surface2) !important;
+  border: none !important;
+}
+.fc .fc-daygrid-event .ev,
+.fc .fc-list-event .ev {
+  border-left: 3px solid var(--venue-rule-dark, var(--venue-color, var(--accent)));
+  padding-left: 6px;
+}
+html[data-mode="light"] .fc .fc-daygrid-event .ev,
+html[data-mode="light"] .fc .fc-list-event .ev {
+  border-left-color: var(--venue-rule-light, var(--venue-color, var(--accent)));
+}
+.fc .fc-daygrid-event .ev-title { color: var(--text); }
+/* Not plain --muted: measured at 4.07:1 on --surface2, which is under the 4.5 floor for
+   11px text. Lifted toward --text until it clears, in every palette and both modes. */
+.fc .fc-daygrid-event .ev-venue {
+  color: color-mix(in srgb, var(--muted) 60%, var(--text));
+}
+.fc .fc-daygrid-event:hover {
+  background-color: color-mix(in srgb, var(--venue-color, var(--accent)) 14%, var(--surface2)) !important;
+}
+.fc .fc-daygrid-event .ev-heart,
+.fc .fc-daygrid-event .ev-hide {
+  color: var(--dim);
+}
+
+/* The list view's own dot is drawn by FullCalendar from the event's border color, which
+   is the unbrightened seed value -- same invisibility problem on a dark surface. */
+.fc .fc-list-event-dot { border-color: var(--venue-rule-dark, var(--venue-color)) !important; }
+html[data-mode="light"] .fc .fc-list-event-dot {
+  border-color: var(--venue-rule-light, var(--venue-color)) !important;
+}
+
+
+/* ── CRT texture: phosphor glow ──────────────────────────────────────────────
+   Accent-colored bloom on identity text only. Never applied to event text, where it
+   would undo the readability work above. */
+
+/* Four layers rather than two: a tight hot core, a bright inner bloom, then two wide
+   falloffs. Real phosphor bloom is a steep core with a long tail, and stacking the radii
+   gets closer to that than turning one shadow up would -- a single wide shadow at high
+   opacity just goes muddy. */
+html[data-glow="on"] .ascii-title {
+  text-shadow: 0 0 2px  color-mix(in srgb, var(--accent) 51%, transparent),
+               0 0 9px  color-mix(in srgb, var(--accent) 44%, transparent),
+               0 0 22px color-mix(in srgb, var(--accent) 25%, transparent),
+               0 0 42px color-mix(in srgb, var(--accent) 11%, transparent);
+}
+html[data-glow="on"] .site-title,
+html[data-glow="on"] .site-subtitle,
+html[data-glow="on"] .fc .fc-toolbar-title,
+html[data-glow="on"] .filter-label,
+html[data-glow="on"] .ls-text {
+  text-shadow: 0 0 2px  color-mix(in srgb, var(--accent) 34%, transparent),
+               0 0 8px  color-mix(in srgb, var(--accent) 34%, transparent),
+               0 0 18px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+html[data-glow="on"] .cursor,
+html[data-glow="on"] .ls-cursor {
+  box-shadow: 0 0 4px  color-mix(in srgb, var(--accent) 52%, transparent),
+              0 0 12px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* Calendar chrome: weekday headers, day numbers, and the list view's date headers.
+   These glow in currentColor rather than --accent, because unlike the identity text they
+   are not all accent-colored -- day numbers are --muted, today's is --accent, and the
+   list headers are --accent. Phosphor emits the color it is already showing, so
+   currentColor is both more accurate and self-maintaining. Radii stay tight: these sit
+   at 11-12px, and a wide falloff at that size costs legibility. */
+html[data-glow="on"] .fc .fc-col-header-cell-cushion,
+html[data-glow="on"] .fc .fc-daygrid-day-number,
+html[data-glow="on"] .fc .fc-list-day-text,
+html[data-glow="on"] .fc .fc-list-day-side-text {
+  text-shadow: 0 0 4px  color-mix(in srgb, currentColor 30%, transparent),
+               0 0 10px color-mix(in srgb, currentColor 14%, transparent);
+}
+
+/* Today's number is the one number that is meant to catch the eye, so it gets a little
+   more than its neighbours rather than the same amount. */
+html[data-glow="on"] .fc .fc-day-today .fc-daygrid-day-number {
+  text-shadow: 0 0 3px  color-mix(in srgb, var(--accent) 44%, transparent),
+               0 0 11px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* Footer. Radius is kept tight here on purpose: bloom has to scale with type size, and
+   the wide falloff that reads as phosphor on the 14px ASCII art smears 10px italic into
+   mush. Same effect, sized for the text it sits on. */
+html[data-glow="on"] .site-credit,
+html[data-glow="on"] .site-credit a {
+  text-shadow: 0 0 3px color-mix(in srgb, var(--accent) 33%, transparent),
+               0 0 9px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+/* Light mode stays much weaker: bloom on a paper-white ground reads as a printing error
+   rather than as phosphor, because there is no dark surround for light to spill into. */
+html[data-glow="on"][data-mode="light"] .ascii-title {
+  text-shadow: 0 0 4px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+html[data-glow="on"][data-mode="light"] .site-credit,
+html[data-glow="on"][data-mode="light"] .site-credit a {
+  text-shadow: 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+
+/* Scanlines were tried here and cut: a 1-in-3 duty cycle lands on the same scale as the
+   ASCII art's own strokes and the 11px sidebar text, so it read as interference rather
+   than as texture. The glow above carries the CRT reference on its own. */
+
+
+/* ── Sticky calendar chrome ──────────────────────────────────────────────────
+   The toolbar and the weekday header are both sticky, and FullCalendar pins both at
+   top: 0 of the scroll container. The toolbar wins on z-index (5 against 3) and has an
+   opaque background, so it sat directly on top of SUN/MON/TUE and hid it completely.
+   Invisible until now, because nothing scrolled the month grid far enough to notice --
+   opening the view at today is what surfaced it.
+
+   Offsetting the header by the toolbar's height stacks them instead. The height is
+   measured rather than hardcoded: the toolbar wraps to two rows at narrow widths, and a
+   fixed value would leave a gap there or overlap again. app.js keeps --fc-toolbar-h
+   current with a ResizeObserver; the fallback covers the frame before it first runs.
+
+   The selector carries .fc-scrollgrid-section-sticky only to win the cascade. FullCalendar
+   sets this with `.fc .fc-scrollgrid-section-header.fc-scrollgrid-section-sticky > *`,
+   which is (0,3,0); the obvious `.fc .fc-scrollgrid-section-header > th` is (0,2,1) and
+   loses, because three classes outrank two classes and an element. It also injects its CSS
+   into a runtime <style> tag, so source order is not reliably ours either. */
+.fc .fc-scrollgrid-section-header.fc-scrollgrid-section-sticky > th {
+  top: var(--fc-toolbar-h, 40px);
+}
+
+
+/* ── Night-density equalizer ─────────────────────────────────────────────────
+   Fourteen bars, one per night, height = number of shows. Sits above the filters it
+   answers to, so changing a filter and watching the bars redraw is a single glance.
+   Built from discrete cells rather than a scaled height so the pixel grid is real. */
+
+.eq-section { padding-bottom: 0.15rem; }
+
+.eq-strip {
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--bg);
+  padding: 7px 7px 5px;
+}
+
+.equalizer {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 54px;           /* 8 cells × 5px + 7 gaps × 2px */
+}
+
+.eq-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  height: 100%;
+}
+
+/* Sunday gets a hairline so a fortnight reads as two weeks rather than fourteen days. */
+.eq-bar.eq-week-start { box-shadow: -2px 0 0 -1px var(--border); }
+
+.eq-cell {
+  flex: 1 1 0;
+  border-radius: 0;                        /* square cells — this is a pixel grid */
+  background: var(--surface2);
+  transition: background-color 0.22s ease, opacity 0.22s ease;
+  /* Bars fill left to right, cells bottom to top, so a redraw sweeps rather than snaps. */
+  transition-delay: calc(var(--bar-index) * 18ms + (7 - var(--cell-index)) * 12ms);
+}
+.eq-cell.on  { background: var(--accent); }
+.eq-cell.cap { background: var(--accent-hover); }
+
+/* Hearted shows fill the base of each bar in --eq-fav, so a bar reads bottom-up as
+   "this many are mine, this many more are on". Declared after .cap so a bar that is
+   entirely hearted stays pink rather than taking the accent cap color.
+
+   The inset rim is not decoration. Pink and the phosphor palette's green sit at almost
+   identical luminance (1.02:1), which is the red-green colorblind failure case exactly --
+   they would flatten to the same grey. The rim makes hearted cells legible as a texture
+   rather than only as a hue. Position carries it too: hearted cells are always the
+   contiguous base of a bar, and the readout and aria-label both say "N hearted" in
+   words, so the color is the third cue rather than the only one. */
+.eq-cell.fav,
+.eq-cell.fav.cap {
+  background: var(--eq-fav);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 45%, transparent);
+}
+
+.eq-bar:hover  .eq-cell.on,
+.eq-bar:focus-visible .eq-cell.on,
+.eq-bar.is-active .eq-cell.on { background: var(--accent-hover); }
+
+.eq-bar:hover .eq-cell,
+.eq-bar.is-active .eq-cell { background: color-mix(in srgb, var(--accent) 22%, var(--surface2)); }
+
+/* Must come after the .on hover rules above. Both are (0,4,0), so order decides, and
+   written any earlier the hearted cells would flip to the accent color on hover. */
+.eq-bar:hover .eq-cell.fav,
+.eq-bar:focus-visible .eq-cell.fav,
+.eq-bar.is-active .eq-cell.fav { background: var(--eq-fav-hover); }
+
+.eq-bar:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+/* Idle shimmer on the top lit cell only — a slow phosphor flicker, not a bounce. The
+   per-bar delay keeps the fourteen out of lockstep. */
+.eq-cell.cap {
+  animation: eqFlicker 3.4s ease-in-out infinite;
+  animation-delay: calc(var(--bar-index) * 240ms);
+}
+@keyframes eqFlicker {
+  0%, 84%, 100% { opacity: 1; }
+  90%           { opacity: 0.55; }
+}
+
+.eq-ruler {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  font-family: var(--font-pixel);
+  font-size: 6px;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+  text-transform: lowercase;
+  user-select: none;
+}
+
+.eq-readout {
+  font-family: var(--font-data);
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  margin-top: 0.35rem;
+  min-height: 1.2em;
+  letter-spacing: 0.02em;
+}
+
+
+/* ── Reduced motion ──────────────────────────────────────────────────────────
+   The equalizer's meaning is in the bar heights, which survive intact. Only the
+   sweep and the flicker are dropped. */
+
+@media (prefers-reduced-motion: reduce) {
+  .eq-cell {
+    transition-delay: 0ms !important;
+    transition-duration: 0ms !important;
+    animation: none !important;
+  }
+  .cursor, .ls-cursor { animation: none !important; }
+}
