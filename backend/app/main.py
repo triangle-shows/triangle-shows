@@ -12,7 +12,9 @@ asyncpg-compatible PostgreSQL; Alembic migrations in backend/alembic/.
 # --- Imports ---
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -264,8 +266,92 @@ frontend_candidates = [
     Path(__file__).parent.parent.parent / "frontend",  # local dev
     Path("/frontend"),  # Docker
 ]
-for frontend_dir in frontend_candidates:
-    if frontend_dir.exists():
-        # Mounted last so API routes take priority over the catch-all html=True handler
-        app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
+
+_frontend_dir: Optional[Path] = None
+for candidate in frontend_candidates:
+    if candidate.exists():
+        _frontend_dir = candidate
         break
+
+
+# --- Asset versioning on index.html ---
+#
+# index.html references /css/*.css and /js/*.js at fixed URLs. Cloudflare caches those at
+# the edge for hours on the free plan, while index.html itself is never edge-cached
+# (cf-cache-status: DYNAMIC). After a deploy that combination serves *new* HTML against
+# *old* assets, which is worse than serving an entirely stale page: on the 2026-08-28
+# release the new markup loaded a new equalizer.js against a styles.css that had no rules
+# for it, and visitors got a row of unstyled buttons in the sidebar.
+#
+# Substituting {{ASSET_VERSION}} with the commit SHA gives every deploy fresh asset URLs,
+# so the edge treats them as new objects and there is nothing left to purge by hand.
+#
+# Done at request time from the env var rather than by rewriting the file at image build:
+# GIT_COMMIT is already in the container (cloudbuild.yaml passes it as a build arg,
+# Dockerfile promotes it to ENV, health.py reads it), and this way the checked-in
+# index.html stays a file that runs as-is in local dev.
+
+ASSET_VERSION_PLACEHOLDER = "{{ASSET_VERSION}}"
+
+
+def _asset_version() -> str:
+    """Cache-busting token for static asset URLs.
+
+    The commit SHA in production. Unset locally and in CI, where "dev" is correct: there is
+    no CDN in front of either, and the browser revalidates against the local server.
+    """
+    return os.environ.get("GIT_COMMIT", "dev")[:12]
+
+
+@lru_cache(maxsize=1)
+def _index_html() -> Optional[str]:
+    """index.html with the asset version substituted, read once per container.
+
+    Cached because neither the file nor GIT_COMMIT changes within the life of a container.
+    Returns None when there is no frontend directory, which is the case in the API-only
+    test runs -- the caller then falls through to a 404 rather than raising.
+    """
+    if _frontend_dir is None:
+        return None
+
+    index_path = _frontend_dir / "index.html"
+    if not index_path.is_file():
+        return None
+
+    html = index_path.read_text(encoding="utf-8")
+    return html.replace(ASSET_VERSION_PLACEHOLDER, _asset_version())
+
+
+@app.get("/", include_in_schema=False)
+@app.get("/index.html", include_in_schema=False)
+async def serve_index():
+    """Serve the templated index.html.
+
+    Registered before the StaticFiles mount below, which would otherwise answer "/" with
+    the raw file and leave the placeholder in the markup.
+
+    no-store rather than a short max-age: this document is what names the versioned asset
+    URLs, so a cached copy of it defeats the whole mechanism by continuing to point at the
+    previous deploy's files.
+    """
+    from fastapi.responses import HTMLResponse, PlainTextResponse
+
+    html = _index_html()
+    if html is None:
+        return PlainTextResponse("Frontend not available", status_code=404)
+
+    return HTMLResponse(
+        html,
+        headers={
+            "Cache-Control": "no-store, must-revalidate",
+            # Surfaces which build a page came from without opening devtools, which is how
+            # the stale-asset problem went unnoticed for as long as it did.
+            "X-Asset-Version": _asset_version(),
+        },
+    )
+
+
+if _frontend_dir is not None:
+    # Mounted last so API routes and serve_index above take priority over the catch-all
+    # html=True handler.
+    app.mount("/", StaticFiles(directory=str(_frontend_dir), html=True), name="frontend")
