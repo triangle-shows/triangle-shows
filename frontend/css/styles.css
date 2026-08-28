@@ -8,6 +8,29 @@
 /* === Variables === */
 :root {
   --sidebar-width: 270px;
+
+  /* Type scale. Replaces 19 ad-hoc rem values that included 0.62 / 0.63 / 0.65 -- sizes
+     nobody can tell apart but every one of which had to be maintained. Six steps, named
+     by role, on whole pixels so a monospace grid stays crisp. */
+  --fs-2xs: 0.625rem;   /* 10px — micro labels only, never running text */
+  --fs-xs:  0.6875rem;  /* 11px — venue line, chips, buttons */
+  --fs-sm:  0.75rem;    /* 12px — utility text */
+  --fs-md:  0.8125rem;  /* 13px — event titles, body */
+  --fs-lg:  0.9375rem;  /* 15px — toolbar title, modal headings */
+  --fs-xl:  1.125rem;   /* 18px — modal title */
+
+  /* Two font stacks with different jobs: Space Mono carries the identity, IBM Plex Mono
+     carries the data. Plex holds its counters at 11-13px where Space Mono's fill in. */
+  --font-identity: 'Space Mono', ui-monospace, monospace;
+  --font-data:     'IBM Plex Mono', 'Space Mono', ui-monospace, monospace;
+  --font-pixel:    'Silkscreen', 'Space Mono', ui-monospace, monospace;
+
+  /* Ink for text sitting on a venue-colored tile. Mixed from --text rather than fixed, so
+     each palette gets an off-white with its own cast. Deliberately not #fff: pure white on
+     a saturated field blooms at the edges and reads softer than the same measured
+     contrast in an off-white. */
+  --tile-ink:     color-mix(in srgb, white 62%, var(--text));
+  --tile-ink-dim: color-mix(in srgb, white 20%, var(--text));
   --bg:           #1a1008;
   --surface:      #241609;
   --surface2:     #2e1d0c;
@@ -699,19 +722,34 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   padding: 2px 32px 2px 4px; /* right padding reserves space for heart + hide */
   overflow: hidden;
 }
+/* Event title.
+   Was Space Mono 700 at 12px, which is the readability complaint that started this branch.
+   Bold works against a monospace at this size: Space Mono's counters are tight to begin
+   with, and at 12px on a saturated field they close up, so the letterforms lose the shapes
+   that tell them apart. The fix is the opposite of the instinct -- less weight, slightly
+   more size, and a little tracking to open the rhythm. */
 .ev-title {
-  font-family: 'Space Mono', monospace;
-  font-size: 0.75rem;
-  font-weight: 700;
+  font-family: var(--font-data);
+  font-size: var(--fs-md);       /* 13px, up from 12 */
+  font-weight: 500;              /* down from 700 */
+  letter-spacing: 0.005em;
+  line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: #fff;
+  color: var(--tile-ink);
 }
+/* Venue line.
+   Was 10.1px at 78% alpha. Two problems: 10px is under the floor for a mono, and
+   compositing white over 22 different saturated hues shifted the result differently on
+   every tile. Now 11px in a solid mixed ink, so it reads the same everywhere. */
 .ev-venue {
-  font-family: 'Space Mono', monospace;
-  font-size: 0.63rem;
-  color: rgba(255,255,255,0.78);
+  font-family: var(--font-data);
+  font-size: var(--fs-xs);       /* 11px, up from ~10.1 */
+  font-weight: 400;
+  letter-spacing: 0.015em;
+  line-height: 1.3;
+  color: var(--tile-ink-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1249,3 +1287,248 @@ html[data-mode="light"] .fc-daygrid-event .ev-hide  { color: rgba(0,0,0,0.3);  }
 }
 .site-credit a { color: var(--accent); text-decoration: none; }
 .site-credit a:hover { color: var(--accent-hover); }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   VISUAL REFRESH — feature/visual-refresh
+   Tile treatments, CRT texture, and the night-density equalizer.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Tile treatment: gutter ──────────────────────────────────────────────────
+   Alternative to the filled tile. The venue color moves to a 3px left rule and the
+   tile sits on the surface, so event text is never on a saturated field and contrast
+   is identical for all 22 venues. Reads like a log gutter or a diff marker, which
+   suits the terminal frame.
+
+   Specificity note: the light-mode rules further up are (0,3,1). These carry .fc as
+   well to reach (0,4,1) so they win in both modes rather than only in dark.
+   background-color needs !important because FullCalendar writes the venue color to
+   the element as an inline style. */
+
+html[data-tiles="gutter"] .fc .fc-daygrid-event {
+  background-color: var(--surface2) !important;
+  border: none !important;
+}
+html[data-tiles="gutter"] .fc .fc-daygrid-event .ev {
+  border-left: 3px solid var(--venue-color, var(--accent));
+  padding-left: 6px;
+}
+html[data-tiles="gutter"] .fc .fc-daygrid-event .ev-title { color: var(--text); }
+/* Not plain --muted: measured at 4.07:1 on --surface2, which is under the 4.5 floor for
+   11px text. Lifted toward --text until it clears, in every palette and both modes. */
+html[data-tiles="gutter"] .fc .fc-daygrid-event .ev-venue {
+  color: color-mix(in srgb, var(--muted) 60%, var(--text));
+}
+html[data-tiles="gutter"] .fc .fc-daygrid-event:hover {
+  background-color: color-mix(in srgb, var(--venue-color, var(--accent)) 14%, var(--surface2)) !important;
+}
+html[data-tiles="gutter"] .fc .fc-daygrid-event .ev-heart,
+html[data-tiles="gutter"] .fc .fc-daygrid-event .ev-hide {
+  color: var(--dim);
+}
+
+/* The list view already draws on the surface, so it only needs the same gutter. */
+html[data-tiles="gutter"] .fc .fc-list-event .ev {
+  border-left: 3px solid var(--venue-color, var(--accent));
+  padding-left: 6px;
+}
+
+
+/* ── CRT texture: phosphor glow ──────────────────────────────────────────────
+   Accent-colored bloom on identity text only. Never applied to event text, where it
+   would undo the readability work above. */
+
+html[data-glow="on"] .ascii-title {
+  text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 55%, transparent),
+               0 0 14px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+html[data-glow="on"] .site-title,
+html[data-glow="on"] .site-subtitle,
+html[data-glow="on"] .fc .fc-toolbar-title,
+html[data-glow="on"] .filter-label,
+html[data-glow="on"] .ls-text {
+  text-shadow: 0 0 5px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+html[data-glow="on"] .cursor,
+html[data-glow="on"] .ls-cursor {
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+/* Light mode gets a much weaker bloom: glow on a paper-white ground reads as a printing
+   error rather than as phosphor. */
+html[data-glow="on"][data-mode="light"] .ascii-title {
+  text-shadow: 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+
+/* ── CRT texture: scanlines ──────────────────────────────────────────────────
+   Chrome surfaces only — the header and the sidebar. Deliberately never over the
+   calendar grid or event tiles, where a 50% duty cycle over 11px text is exactly the
+   kind of decoration that costs legibility. */
+
+html[data-scanlines="on"] .app-header::after,
+html[data-scanlines="on"] .sidebar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  background: repeating-linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--bg) 55%, transparent) 0px,
+    color-mix(in srgb, var(--bg) 55%, transparent) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+html[data-scanlines="on"] .sidebar { position: relative; }
+
+
+/* ── Night-density equalizer ─────────────────────────────────────────────────
+   Fourteen bars, one per night, height = number of shows. Sits above the filters it
+   answers to, so changing a filter and watching the bars redraw is a single glance.
+   Built from discrete cells rather than a scaled height so the pixel grid is real. */
+
+.eq-section { padding-bottom: 0.15rem; }
+
+.eq-strip {
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--bg);
+  padding: 7px 7px 5px;
+}
+
+.equalizer {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 54px;           /* 8 cells × 5px + 7 gaps × 2px */
+}
+
+.eq-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  height: 100%;
+}
+
+/* Sunday gets a hairline so a fortnight reads as two weeks rather than fourteen days. */
+.eq-bar.eq-week-start { box-shadow: -2px 0 0 -1px var(--border); }
+
+.eq-cell {
+  flex: 1 1 0;
+  border-radius: 0;                        /* square cells — this is a pixel grid */
+  background: var(--surface2);
+  transition: background-color 0.22s ease, opacity 0.22s ease;
+  /* Bars fill left to right, cells bottom to top, so a redraw sweeps rather than snaps. */
+  transition-delay: calc(var(--bar-index) * 18ms + (7 - var(--cell-index)) * 12ms);
+}
+.eq-cell.on  { background: var(--accent); }
+.eq-cell.cap { background: var(--accent-hover); }
+
+.eq-bar:hover  .eq-cell.on,
+.eq-bar:focus-visible .eq-cell.on,
+.eq-bar.is-active .eq-cell.on { background: var(--accent-hover); }
+
+.eq-bar:hover .eq-cell,
+.eq-bar.is-active .eq-cell { background: color-mix(in srgb, var(--accent) 22%, var(--surface2)); }
+
+.eq-bar:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+/* Idle shimmer on the top lit cell only — a slow phosphor flicker, not a bounce. The
+   per-bar delay keeps the fourteen out of lockstep. */
+.eq-cell.cap {
+  animation: eqFlicker 3.4s ease-in-out infinite;
+  animation-delay: calc(var(--bar-index) * 240ms);
+}
+@keyframes eqFlicker {
+  0%, 84%, 100% { opacity: 1; }
+  90%           { opacity: 0.55; }
+}
+
+.eq-ruler {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  font-family: var(--font-pixel);
+  font-size: 6px;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+  text-transform: lowercase;
+  user-select: none;
+}
+
+.eq-readout {
+  font-family: var(--font-data);
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  margin-top: 0.35rem;
+  min-height: 1.2em;
+  letter-spacing: 0.02em;
+}
+
+
+/* ── Design lab (temporary) ──────────────────────────────────────────────────
+   Comparison controls for this branch. Remove alongside the markup in index.html and
+   the lab section of js/design.js once the direction is chosen. */
+
+.lab-section {
+  border-top: 1px dashed var(--border);
+  padding-top: 0.75rem;
+  margin-top: 0.4rem;
+}
+.lab-label::after {
+  content: " ·branch";
+  color: var(--dim);
+  font-style: italic;
+}
+.lab-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.3rem;
+}
+.lab-row-label {
+  font-family: var(--font-data);
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+}
+.lab-group { display: flex; gap: 3px; }
+.lab-btn {
+  font-family: var(--font-data);
+  font-size: var(--fs-2xs);
+  padding: 2px 6px;
+  background: none;
+  color: var(--dim);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background-color 0.12s;
+}
+.lab-btn:hover { color: var(--accent); border-color: var(--accent); }
+.lab-btn.active {
+  color: var(--accent-hover);
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+
+/* ── Reduced motion ──────────────────────────────────────────────────────────
+   The equalizer's meaning is in the bar heights, which survive intact. Only the
+   sweep and the flicker are dropped. */
+
+@media (prefers-reduced-motion: reduce) {
+  .eq-cell {
+    transition-delay: 0ms !important;
+    transition-duration: 0ms !important;
+    animation: none !important;
+  }
+  .cursor, .ls-cursor { animation: none !important; }
+}

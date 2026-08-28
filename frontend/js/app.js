@@ -38,6 +38,15 @@ document.addEventListener("DOMContentLoaded", function () {
 
 // FullCalendar initialization
 let calendar;
+
+// Feed the night-density equalizer whatever the calendar is about to draw. Guarded rather
+// than assumed present so the calendar still renders if equalizer.js fails to load.
+function _updateEqualizer(events) {
+  if (window.Equalizer && typeof window.Equalizer.update === "function") {
+    window.Equalizer.update(events);
+  }
+}
+
 const _loadingScreenStart = Date.now();
 let _initialLoadComplete = false;  // guards the function-source fetch against re-fetching from API
 let _loadingScreenDismissed = false;
@@ -181,16 +190,33 @@ document.addEventListener("DOMContentLoaded", function () {
               return r.json();
             })
             .then(function (data) {
+              // Clamp every venue color to a readable luminance band before anything
+              // renders. Venue colors are hand-authored in seed.py with no contrast check;
+              // normalizing here fixes both modes at once (dark mode paints them as tile
+              // backgrounds, light mode as tile text) and keeps any future light color
+              // from reopening the same hole. See js/design.js.
+              if (typeof normalizeVenueColor === "function") {
+                data.forEach(function (ev) {
+                  const safe = normalizeVenueColor(ev.backgroundColor);
+                  ev.backgroundColor = safe;
+                  ev.borderColor     = safe;
+                  if (ev.extendedProps) ev.extendedProps.venue_color = safe;
+                });
+              }
               _allEventsCache = data;
               _initialLoadComplete = true;
-              successCallback(_getFilteredEvents());
+              const visible = _getFilteredEvents();
+              _updateEqualizer(visible);
+              successCallback(visible);
             })
             .catch(function (err) {
               console.error("Failed to fetch events:", err);
               failureCallback(err);
             });
         } else {
-          successCallback(_getFilteredEvents());
+          const visible = _getFilteredEvents();
+          _updateEqualizer(visible);
+          successCallback(visible);
         }
       },
     ],
@@ -285,6 +311,9 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   calendar.render();
+  // `let calendar` lives in the script scope, not on window, so the equalizer's
+  // click-to-jump cannot reach it without this.
+  window.calendar = calendar;
 
   // ── Heart / favorite click handler ──────────────────────────────────────
   // Use capture phase so we intercept before FullCalendar's eventClick fires.
