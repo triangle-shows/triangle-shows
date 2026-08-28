@@ -25,12 +25,6 @@
   --font-data:     'IBM Plex Mono', 'Space Mono', ui-monospace, monospace;
   --font-pixel:    'Silkscreen', 'Space Mono', ui-monospace, monospace;
 
-  /* Ink for text sitting on a venue-colored tile. Mixed from --text rather than fixed, so
-     each palette gets an off-white with its own cast. Deliberately not #fff: pure white on
-     a saturated field blooms at the edges and reads softer than the same measured
-     contrast in an off-white. */
-  --tile-ink:     color-mix(in srgb, white 62%, var(--text));
-  --tile-ink-dim: color-mix(in srgb, white 20%, var(--text));
 
   /* Hearted shows in the equalizer. Deliberately off-palette -- it is the one thing in
      the strip that is not "how busy is that night", so it should not be a shade of the
@@ -770,7 +764,7 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--tile-ink);
+  color: var(--text);
 }
 /* Venue line.
    Was 10.1px at 78% alpha. Two problems: 10px is under the floor for a mono, and
@@ -782,7 +776,7 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   font-weight: 400;
   letter-spacing: 0.015em;
   line-height: 1.3;
-  color: var(--tile-ink-dim);
+  color: color-mix(in srgb, var(--muted) 60%, var(--text));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1200,14 +1194,10 @@ html[data-mode="light"] .fc-list-event .ev-heart { color: rgba(0,0,0,0.35); }
 html[data-mode="light"] .fc-list-event .ev-hide  { color: rgba(0,0,0,0.25); }
 html[data-mode="light"] .venue-hide-btn          { color: rgba(0,0,0,0.35); }
 
-/* Light mode: daygrid event chips — light bg + accent text so venue colors aren't washed */
-html[data-mode="light"] .fc .fc-daygrid-event {
-  background-color: var(--surface2) !important;
-}
-html[data-mode="light"] .fc-daygrid-event .ev-title { color: var(--venue-color, var(--accent)); }
-html[data-mode="light"] .fc-daygrid-event .ev-venue { color: var(--muted); }
-html[data-mode="light"] .fc-daygrid-event .ev-heart { color: rgba(0,0,0,0.35); }
-html[data-mode="light"] .fc-daygrid-event .ev-hide  { color: rgba(0,0,0,0.3);  }
+/* Light mode needs nothing special for daygrid events now. The block that used to live
+   here put them on --surface2 and colored the title with the venue color, to rescue the
+   filled tile in light mode. The gutter treatment already does that in both modes, and
+   these rules were (0,3,1) -- high enough to override it. */
 
 /* === Spotify === */
 .spotify-connect-wrap { margin-top: 0.55rem; }
@@ -1338,32 +1328,38 @@ html[data-mode="light"] .fc-daygrid-event .ev-hide  { color: rgba(0,0,0,0.3);  }
    background-color needs !important because FullCalendar writes the venue color to
    the element as an inline style. */
 
-html[data-tiles="gutter"] .fc .fc-daygrid-event {
+.fc .fc-daygrid-event {
   background-color: var(--surface2) !important;
   border: none !important;
 }
-html[data-tiles="gutter"] .fc .fc-daygrid-event .ev {
-  border-left: 3px solid var(--venue-color, var(--accent));
+.fc .fc-daygrid-event .ev,
+.fc .fc-list-event .ev {
+  border-left: 3px solid var(--venue-rule-dark, var(--venue-color, var(--accent)));
   padding-left: 6px;
 }
-html[data-tiles="gutter"] .fc .fc-daygrid-event .ev-title { color: var(--text); }
+html[data-mode="light"] .fc .fc-daygrid-event .ev,
+html[data-mode="light"] .fc .fc-list-event .ev {
+  border-left-color: var(--venue-rule-light, var(--venue-color, var(--accent)));
+}
+.fc .fc-daygrid-event .ev-title { color: var(--text); }
 /* Not plain --muted: measured at 4.07:1 on --surface2, which is under the 4.5 floor for
    11px text. Lifted toward --text until it clears, in every palette and both modes. */
-html[data-tiles="gutter"] .fc .fc-daygrid-event .ev-venue {
+.fc .fc-daygrid-event .ev-venue {
   color: color-mix(in srgb, var(--muted) 60%, var(--text));
 }
-html[data-tiles="gutter"] .fc .fc-daygrid-event:hover {
+.fc .fc-daygrid-event:hover {
   background-color: color-mix(in srgb, var(--venue-color, var(--accent)) 14%, var(--surface2)) !important;
 }
-html[data-tiles="gutter"] .fc .fc-daygrid-event .ev-heart,
-html[data-tiles="gutter"] .fc .fc-daygrid-event .ev-hide {
+.fc .fc-daygrid-event .ev-heart,
+.fc .fc-daygrid-event .ev-hide {
   color: var(--dim);
 }
 
-/* The list view already draws on the surface, so it only needs the same gutter. */
-html[data-tiles="gutter"] .fc .fc-list-event .ev {
-  border-left: 3px solid var(--venue-color, var(--accent));
-  padding-left: 6px;
+/* The list view's own dot is drawn by FullCalendar from the event's border color, which
+   is the unbrightened seed value -- same invisibility problem on a dark surface. */
+.fc .fc-list-event-dot { border-color: var(--venue-rule-dark, var(--venue-color)) !important; }
+html[data-mode="light"] .fc .fc-list-event-dot {
+  border-color: var(--venue-rule-light, var(--venue-color)) !important;
 }
 
 
@@ -1376,24 +1372,45 @@ html[data-tiles="gutter"] .fc .fc-list-event .ev {
    gets closer to that than turning one shadow up would -- a single wide shadow at high
    opacity just goes muddy. */
 html[data-glow="on"] .ascii-title {
-  text-shadow: 0 0 2px  color-mix(in srgb, var(--accent) 85%, transparent),
-               0 0 9px  color-mix(in srgb, var(--accent) 75%, transparent),
-               0 0 22px color-mix(in srgb, var(--accent) 45%, transparent),
-               0 0 42px color-mix(in srgb, var(--accent) 22%, transparent);
+  text-shadow: 0 0 2px  color-mix(in srgb, var(--accent) 68%, transparent),
+               0 0 9px  color-mix(in srgb, var(--accent) 58%, transparent),
+               0 0 22px color-mix(in srgb, var(--accent) 33%, transparent),
+               0 0 42px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 html[data-glow="on"] .site-title,
 html[data-glow="on"] .site-subtitle,
 html[data-glow="on"] .fc .fc-toolbar-title,
 html[data-glow="on"] .filter-label,
 html[data-glow="on"] .ls-text {
-  text-shadow: 0 0 2px  color-mix(in srgb, var(--accent) 60%, transparent),
-               0 0 8px  color-mix(in srgb, var(--accent) 62%, transparent),
-               0 0 18px color-mix(in srgb, var(--accent) 30%, transparent);
+  text-shadow: 0 0 2px  color-mix(in srgb, var(--accent) 46%, transparent),
+               0 0 8px  color-mix(in srgb, var(--accent) 46%, transparent),
+               0 0 18px color-mix(in srgb, var(--accent) 21%, transparent);
 }
 html[data-glow="on"] .cursor,
 html[data-glow="on"] .ls-cursor {
-  box-shadow: 0 0 4px  color-mix(in srgb, var(--accent) 90%, transparent),
-              0 0 12px color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 4px  color-mix(in srgb, var(--accent) 70%, transparent),
+              0 0 12px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* Calendar chrome: weekday headers, day numbers, and the list view's date headers.
+   These glow in currentColor rather than --accent, because unlike the identity text they
+   are not all accent-colored -- day numbers are --muted, today's is --accent, and the
+   list headers are --accent. Phosphor emits the color it is already showing, so
+   currentColor is both more accurate and self-maintaining. Radii stay tight: these sit
+   at 11-12px, and a wide falloff at that size costs legibility. */
+html[data-glow="on"] .fc .fc-col-header-cell-cushion,
+html[data-glow="on"] .fc .fc-daygrid-day-number,
+html[data-glow="on"] .fc .fc-list-day-text,
+html[data-glow="on"] .fc .fc-list-day-side-text {
+  text-shadow: 0 0 4px  color-mix(in srgb, currentColor 40%, transparent),
+               0 0 10px color-mix(in srgb, currentColor 18%, transparent);
+}
+
+/* Today's number is the one number that is meant to catch the eye, so it gets a little
+   more than its neighbours rather than the same amount. */
+html[data-glow="on"] .fc .fc-day-today .fc-daygrid-day-number {
+  text-shadow: 0 0 3px  color-mix(in srgb, var(--accent) 58%, transparent),
+               0 0 11px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 /* Footer. Radius is kept tight here on purpose: bloom has to scale with type size, and
@@ -1401,18 +1418,18 @@ html[data-glow="on"] .ls-cursor {
    mush. Same effect, sized for the text it sits on. */
 html[data-glow="on"] .site-credit,
 html[data-glow="on"] .site-credit a {
-  text-shadow: 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent),
-               0 0 9px color-mix(in srgb, var(--accent) 28%, transparent);
+  text-shadow: 0 0 3px color-mix(in srgb, var(--accent) 44%, transparent),
+               0 0 9px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 /* Light mode stays much weaker: bloom on a paper-white ground reads as a printing error
    rather than as phosphor, because there is no dark surround for light to spill into. */
 html[data-glow="on"][data-mode="light"] .ascii-title {
-  text-shadow: 0 0 4px color-mix(in srgb, var(--accent) 26%, transparent);
+  text-shadow: 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 html[data-glow="on"][data-mode="light"] .site-credit,
 html[data-glow="on"][data-mode="light"] .site-credit a {
-  text-shadow: 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  text-shadow: 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 
@@ -1530,52 +1547,6 @@ html[data-glow="on"][data-mode="light"] .site-credit a {
   margin-top: 0.35rem;
   min-height: 1.2em;
   letter-spacing: 0.02em;
-}
-
-
-/* ── Design lab (temporary) ──────────────────────────────────────────────────
-   Comparison controls for this branch. Remove alongside the markup in index.html and
-   the lab section of js/design.js once the direction is chosen. */
-
-.lab-section {
-  border-top: 1px dashed var(--border);
-  padding-top: 0.75rem;
-  margin-top: 0.4rem;
-}
-.lab-label::after {
-  content: " ·branch";
-  color: var(--dim);
-  font-style: italic;
-}
-.lab-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 0.3rem;
-}
-.lab-row-label {
-  font-family: var(--font-data);
-  font-size: var(--fs-2xs);
-  color: var(--muted);
-}
-.lab-group { display: flex; gap: 3px; }
-.lab-btn {
-  font-family: var(--font-data);
-  font-size: var(--fs-2xs);
-  padding: 2px 6px;
-  background: none;
-  color: var(--dim);
-  border: 1px solid var(--border);
-  border-radius: 1px;
-  cursor: pointer;
-  transition: color 0.12s, border-color 0.12s, background-color 0.12s;
-}
-.lab-btn:hover { color: var(--accent); border-color: var(--accent); }
-.lab-btn.active {
-  color: var(--accent-hover);
-  border-color: var(--accent);
-  background: var(--accent-bg);
 }
 
 

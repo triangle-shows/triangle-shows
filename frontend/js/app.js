@@ -200,7 +200,18 @@ document.addEventListener("DOMContentLoaded", function () {
                   const safe = normalizeVenueColor(ev.backgroundColor);
                   ev.backgroundColor = safe;
                   ev.borderColor     = safe;
-                  if (ev.extendedProps) ev.extendedProps.venue_color = safe;
+                  if (ev.extendedProps) {
+                    ev.extendedProps.venue_color = safe;
+                    // The gutter rule needs a brighter variant on a dark surface: these
+                    // colors were authored as backgrounds behind white text, so all 22
+                    // measure under 3:1 as a 3px rule on --surface2. Both variants are
+                    // carried and CSS picks by mode.
+                    if (typeof venueRuleColors === "function") {
+                      const rule = venueRuleColors(safe);
+                      ev.extendedProps.venue_rule_dark  = rule.dark;
+                      ev.extendedProps.venue_rule_light = rule.light;
+                    }
+                  }
                 });
               }
               _allEventsCache = data;
@@ -292,6 +303,15 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     },
     eventDidMount: function (info) {
+      // Publish the gutter rule colors on the event element rather than on .ev inside it.
+      // The list view's colored dot is drawn by FullCalendar as a sibling of the title
+      // cell, so a property set on .ev would not reach it.
+      const p = info.event.extendedProps;
+      if (p && p.venue_rule_dark) {
+        info.el.style.setProperty("--venue-rule-dark", p.venue_rule_dark);
+        info.el.style.setProperty("--venue-rule-light", p.venue_rule_light);
+      }
+
       // Restore heart state for events loaded after page init.
       if (typeof isFavorited === "function" && isFavorited(info.event.id)) {
         const btn = info.el.querySelector(".ev-heart");

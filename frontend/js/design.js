@@ -1,20 +1,25 @@
 /**
- * Venue-color normalization and the design-lab toggles.
+ * Venue-color conditioning for the calendar.
  *
- * Role: Loaded before app.js. Exposes normalizeVenueColor(), which app.js applies to
- * every event as it arrives, and wires the sidebar's design-lab controls to attributes
- * on <html> that styles.css keys off.
+ * Role: Loaded before app.js, which applies both functions here to every event as it
+ * arrives. Pure color math -- no DOM beyond setting the glow attribute at the end.
  *
- * Why normalization exists. Venue colors are authored by hand in backend/app/seed.py and
- * nothing checks them for contrast. The Carolina Theatre's #F5D765 renders white-on-yellow
- * at 1.42:1 in dark mode, and venue-colored-text-on-warm-paper at roughly 1.2:1 in light
- * mode -- unreadable in both. Rather than hand-fixing that one value and waiting for the
- * next light venue color to reopen the same hole, every color is clamped to a luminance
- * band on the way in. Hue and saturation survive, so venues stay distinguishable.
+ * Venue colors are authored by hand in backend/app/seed.py and nothing checks them for
+ * contrast. Two separate problems follow, and each gets its own pass:
  *
- * The band is derived, not guessed: TARGET_CONTRAST is set by the dimmest text that sits
- * on a tile (the venue line, --tile-ink-dim), not by the title. Meet the floor for the
- * quieter of the two and the louder one follows.
+ * normalizeVenueColor() caps how light a color may be. Its original job was white text on
+ * a filled tile; tiles are now gutter-ruled, so what it actually guards today is the rule
+ * against the light-mode surface -- a pale venue color would vanish on warm paper, which
+ * is exactly what The Carolina Theatre's old #F5D765 did.
+ *
+ * venueRuleColors() solves the opposite problem. Every seeded color is dark, because they
+ * were drawn to sit behind white text, and a dark rule on a dark surface is invisible: all
+ * 22 measured between 1.14:1 and 2.51:1 against --surface2, under the 3:1 a graphic needs.
+ * It emits a brightened variant for dark mode and leaves the original for light.
+ *
+ * Both walk the value in small steps rather than solving directly, because luminance per
+ * unit of HSL lightness varies enormously by hue -- yellow is far brighter than blue at
+ * the same nominal lightness.
  */
 
 (function (global) {
@@ -97,9 +102,10 @@
 
   // --- Normalization ---
 
-  // The venue line uses --tile-ink-dim (#e2dace, luminance ~0.70). Holding that to the
-  // WCAG 4.5:1 minimum for small text caps tile luminance at ~0.117, which is a white
-  // contrast of ~6.3. Rounded up for margin.
+  // Originally derived from white text on a filled tile. The tiles are gutter-ruled now,
+  // so the number is kept for a different reason: a color this dark is guaranteed to clear
+  // 3:1 as a rule against every light-mode --surface2, measured at 4.85:1 or better across
+  // all five palettes. Loosening it would let a pale venue color disappear on warm paper.
   const TARGET_CONTRAST = 6.5;
 
   // Below this, a hue reads as grey and two venues become hard to tell apart. Darkening a
@@ -151,76 +157,65 @@
     return result;
   }
 
-  // --- Design lab ---
+  // --- Gutter rule colors ---
   //
-  // Exploration controls for this branch: they let the two tile treatments and the two CRT
-  // textures be compared on real data instead of in the abstract. Each writes one attribute
-  // on <html> and persists it. Remove this block, its markup, and the [data-tiles="gutter"]
-  // / [data-glow] / [data-scanlines] rules once the direction is settled.
+  // The venue palette was authored for the old filled tile: every color is a dark
+  // background meant to sit behind white text. As a 3px rule on a dark surface those same
+  // colors are nearly invisible -- measured across all 22, they land between 1.14:1 and
+  // 2.51:1 against --surface2, where a graphic needs 3:1. All 22 failed.
+  //
+  // They are fine on the light surface (4.85:1 and up), so only dark mode needs a
+  // brightened variant. Both are emitted per event and CSS picks by mode.
 
-  // Glow defaults on -- it was kept after the comparison pass. Scanlines were dropped
-  // outright rather than defaulted off, so no stale attribute is left on <html>.
-  const LAB_KEYS = {
-    tiles: { attr: "data-tiles", storage: "ts-lab-tiles", fallback: "fill" },
-    glow:  { attr: "data-glow",  storage: "ts-lab-glow",  fallback: "on"   },
-  };
+  // 4:1 against the lightest dark --surface2 across the five palettes (durham, #0e2340).
+  // Targeting the lightest one means the result clears every palette, not just amber.
+  const RULE_TARGET_LUMINANCE = 0.2166;
 
-  function _read(key) {
-    const spec = LAB_KEYS[key];
-    try {
-      return localStorage.getItem(spec.storage) || spec.fallback;
-    } catch (e) {
-      return spec.fallback;
+  // Darkening a color to normalize it also drains saturation, and a rule that has gone
+  // grey stops identifying its venue. Restored before brightening.
+  const RULE_MIN_SATURATION = 0.45;
+
+  const _ruleCache = Object.create(null);
+
+  /**
+   * Rule colors for one venue: { dark, light }.
+   *
+   * `light` is the color unchanged -- it is already dark enough to read on warm paper.
+   * `dark` is the same hue lifted until it clears the target against a dark surface.
+   */
+  function venueRuleColors(hex) {
+    if (!hex) return { dark: hex, light: hex };
+    if (_ruleCache[hex]) return _ruleCache[hex];
+
+    const rgb = hexToRgb(hex);
+    if (!rgb) {
+      _ruleCache[hex] = { dark: hex, light: hex };
+      return _ruleCache[hex];
     }
-  }
 
-  function setLabOption(key, value) {
-    const spec = LAB_KEYS[key];
-    if (!spec) return;
+    const hsl = rgbToHsl(rgb);
+    const hue = hsl[0];
+    const saturation = Math.max(hsl[1], RULE_MIN_SATURATION);
 
-    document.documentElement.setAttribute(spec.attr, value);
-    try {
-      localStorage.setItem(spec.storage, value);
-    } catch (e) {
-      /* Private browsing: the choice still applies, it just will not persist. */
+    // Stepped rather than solved directly, for the same reason as normalizeVenueColor:
+    // luminance per unit of HSL lightness varies a lot by hue.
+    let out = rgb;
+    let lightness = hsl[2];
+    while (lightness < 1) {
+      out = hslToRgb([hue, saturation, lightness]);
+      if (relativeLuminance(out) >= RULE_TARGET_LUMINANCE) break;
+      lightness += 0.01;
     }
 
-    document.querySelectorAll('.lab-btn[data-lab-key="' + key + '"]').forEach(function (btn) {
-      const active = btn.getAttribute("data-lab-value") === value;
-      btn.classList.toggle("active", active);
-      btn.setAttribute("aria-pressed", active ? "true" : "false");
-    });
-
-    // The tile treatments differ in text color, so the equalizer's own tinting follows.
-    if (key === "tiles" && global.Equalizer && global.Equalizer.refresh) {
-      global.Equalizer.refresh();
-    }
+    _ruleCache[hex] = { dark: rgbToHex(out), light: hex };
+    return _ruleCache[hex];
   }
 
-  function initDesignLab() {
-    Object.keys(LAB_KEYS).forEach(function (key) {
-      setLabOption(key, _read(key));
-    });
-
-    document.querySelectorAll(".lab-btn").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        setLabOption(btn.getAttribute("data-lab-key"), btn.getAttribute("data-lab-value"));
-      });
-    });
-  }
-
-  // Applied before first paint so tiles never flash the wrong treatment.
-  Object.keys(LAB_KEYS).forEach(function (key) {
-    document.documentElement.setAttribute(LAB_KEYS[key].attr, _read(key));
-  });
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initDesignLab);
-  } else {
-    initDesignLab();
-  }
+  // The gutter tile treatment is now unconditional in the stylesheet, so it needs no
+  // attribute. The glow still keys off one, which keeps it a single line to turn off.
+  document.documentElement.setAttribute("data-glow", "on");
 
   // --- Exports ---
   global.normalizeVenueColor = normalizeVenueColor;
-  global.setLabOption = setLabOption;
+  global.venueRuleColors = venueRuleColors;
 })(window);
