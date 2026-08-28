@@ -632,11 +632,16 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
 
 /* === Calendar === */
 .calendar-container {
-  padding: 1.1rem 1.25rem;
+  /* Top spacing is a margin on .fc rather than padding here. A sticky element pins to the
+     padding box, so with padding-top the toolbar stopped 1.1rem below the container's top
+     edge and scrolling rows showed through the strip above it. As a margin the same gap
+     scrolls away with the content, and the toolbar pins flush. */
+  padding: 0 1.25rem 1.1rem;
   background: var(--bg);
   overflow-y: auto;
   height: 100%;
 }
+.calendar-container > .fc { margin-top: 1.1rem; }
 
 /* FullCalendar overrides */
 .fc {
@@ -1372,24 +1377,24 @@ html[data-mode="light"] .fc .fc-list-event-dot {
    gets closer to that than turning one shadow up would -- a single wide shadow at high
    opacity just goes muddy. */
 html[data-glow="on"] .ascii-title {
-  text-shadow: 0 0 2px  color-mix(in srgb, var(--accent) 68%, transparent),
-               0 0 9px  color-mix(in srgb, var(--accent) 58%, transparent),
-               0 0 22px color-mix(in srgb, var(--accent) 33%, transparent),
-               0 0 42px color-mix(in srgb, var(--accent) 15%, transparent);
+  text-shadow: 0 0 2px  color-mix(in srgb, var(--accent) 51%, transparent),
+               0 0 9px  color-mix(in srgb, var(--accent) 44%, transparent),
+               0 0 22px color-mix(in srgb, var(--accent) 25%, transparent),
+               0 0 42px color-mix(in srgb, var(--accent) 11%, transparent);
 }
 html[data-glow="on"] .site-title,
 html[data-glow="on"] .site-subtitle,
 html[data-glow="on"] .fc .fc-toolbar-title,
 html[data-glow="on"] .filter-label,
 html[data-glow="on"] .ls-text {
-  text-shadow: 0 0 2px  color-mix(in srgb, var(--accent) 46%, transparent),
-               0 0 8px  color-mix(in srgb, var(--accent) 46%, transparent),
-               0 0 18px color-mix(in srgb, var(--accent) 21%, transparent);
+  text-shadow: 0 0 2px  color-mix(in srgb, var(--accent) 34%, transparent),
+               0 0 8px  color-mix(in srgb, var(--accent) 34%, transparent),
+               0 0 18px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 html[data-glow="on"] .cursor,
 html[data-glow="on"] .ls-cursor {
-  box-shadow: 0 0 4px  color-mix(in srgb, var(--accent) 70%, transparent),
-              0 0 12px color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow: 0 0 4px  color-mix(in srgb, var(--accent) 52%, transparent),
+              0 0 12px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 /* Calendar chrome: weekday headers, day numbers, and the list view's date headers.
@@ -1402,15 +1407,15 @@ html[data-glow="on"] .fc .fc-col-header-cell-cushion,
 html[data-glow="on"] .fc .fc-daygrid-day-number,
 html[data-glow="on"] .fc .fc-list-day-text,
 html[data-glow="on"] .fc .fc-list-day-side-text {
-  text-shadow: 0 0 4px  color-mix(in srgb, currentColor 40%, transparent),
-               0 0 10px color-mix(in srgb, currentColor 18%, transparent);
+  text-shadow: 0 0 4px  color-mix(in srgb, currentColor 30%, transparent),
+               0 0 10px color-mix(in srgb, currentColor 14%, transparent);
 }
 
 /* Today's number is the one number that is meant to catch the eye, so it gets a little
    more than its neighbours rather than the same amount. */
 html[data-glow="on"] .fc .fc-day-today .fc-daygrid-day-number {
-  text-shadow: 0 0 3px  color-mix(in srgb, var(--accent) 58%, transparent),
-               0 0 11px color-mix(in srgb, var(--accent) 30%, transparent);
+  text-shadow: 0 0 3px  color-mix(in srgb, var(--accent) 44%, transparent),
+               0 0 11px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 /* Footer. Radius is kept tight here on purpose: bloom has to scale with type size, and
@@ -1418,24 +1423,46 @@ html[data-glow="on"] .fc .fc-day-today .fc-daygrid-day-number {
    mush. Same effect, sized for the text it sits on. */
 html[data-glow="on"] .site-credit,
 html[data-glow="on"] .site-credit a {
-  text-shadow: 0 0 3px color-mix(in srgb, var(--accent) 44%, transparent),
-               0 0 9px color-mix(in srgb, var(--accent) 20%, transparent);
+  text-shadow: 0 0 3px color-mix(in srgb, var(--accent) 33%, transparent),
+               0 0 9px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
 /* Light mode stays much weaker: bloom on a paper-white ground reads as a printing error
    rather than as phosphor, because there is no dark surround for light to spill into. */
 html[data-glow="on"][data-mode="light"] .ascii-title {
-  text-shadow: 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent);
+  text-shadow: 0 0 4px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 html[data-glow="on"][data-mode="light"] .site-credit,
 html[data-glow="on"][data-mode="light"] .site-credit a {
-  text-shadow: 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+  text-shadow: 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 
 /* Scanlines were tried here and cut: a 1-in-3 duty cycle lands on the same scale as the
    ASCII art's own strokes and the 11px sidebar text, so it read as interference rather
    than as texture. The glow above carries the CRT reference on its own. */
+
+
+/* ── Sticky calendar chrome ──────────────────────────────────────────────────
+   The toolbar and the weekday header are both sticky, and FullCalendar pins both at
+   top: 0 of the scroll container. The toolbar wins on z-index (5 against 3) and has an
+   opaque background, so it sat directly on top of SUN/MON/TUE and hid it completely.
+   Invisible until now, because nothing scrolled the month grid far enough to notice --
+   opening the view at today is what surfaced it.
+
+   Offsetting the header by the toolbar's height stacks them instead. The height is
+   measured rather than hardcoded: the toolbar wraps to two rows at narrow widths, and a
+   fixed value would leave a gap there or overlap again. app.js keeps --fc-toolbar-h
+   current with a ResizeObserver; the fallback covers the frame before it first runs.
+
+   The selector carries .fc-scrollgrid-section-sticky only to win the cascade. FullCalendar
+   sets this with `.fc .fc-scrollgrid-section-header.fc-scrollgrid-section-sticky > *`,
+   which is (0,3,0); the obvious `.fc .fc-scrollgrid-section-header > th` is (0,2,1) and
+   loses, because three classes outrank two classes and an element. It also injects its CSS
+   into a runtime <style> tag, so source order is not reliably ours either. */
+.fc .fc-scrollgrid-section-header.fc-scrollgrid-section-sticky > th {
+  top: var(--fc-toolbar-h, 40px);
+}
 
 
 /* ── Night-density equalizer ─────────────────────────────────────────────────

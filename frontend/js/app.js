@@ -47,6 +47,84 @@ function _updateEqualizer(events) {
   }
 }
 
+// ── Scroll the month grid to today ───────────────────────────────────────────
+//
+// The month view renders at its full height inside .calendar-container, which is the
+// element that scrolls. Late in a month that puts today's row below the fold, so the page
+// opens on a stretch of days that have already happened.
+//
+// Only dayGrid needs this. The list view is built as a 180-day window starting today, so
+// its first row already is today.
+const _TODAY_HEADROOM = 90; // px of earlier weeks left visible above today, for context
+let _scrolledToTodayOnce = false;
+
+function _scrollToToday(smooth) {
+  const container = document.querySelector(".calendar-container");
+  const cell = document.querySelector(".fc-day-today");
+  if (!container || !cell) return;
+
+  const cellRect = cell.getBoundingClientRect();
+  const boxRect  = container.getBoundingClientRect();
+
+  // Leave it alone when today's row is already fully in view. Scrolling a reader back to
+  // where they already are is worse than not scrolling at all.
+  if (cellRect.top >= boxRect.top && cellRect.bottom <= boxRect.bottom) return;
+
+  const target = container.scrollTop + (cellRect.top - boxRect.top) - _TODAY_HEADROOM;
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  container.scrollTo({
+    top: Math.max(0, target),
+    behavior: smooth && !reduced ? "smooth" : "auto",
+  });
+}
+
+// Row heights depend on how many events land in each cell, so this has to run after the
+// tiles are in the DOM.
+//
+// Two frames when the tab is visible: one for FullCalendar's own paint, one for the layout
+// that follows it. But requestAnimationFrame does not fire at all while a tab is in the
+// background, so a timer backs it up -- without it, a page opened in a background tab is
+// still sitting at the top of the month whenever someone gets round to looking at it.
+// Whichever fires first wins; the other finds the work already done.
+function _scrollToTodayWhenSettled(smooth) {
+  let done = false;
+  const run = function () {
+    if (done) return;
+    done = true;
+    _scrollToToday(smooth);
+  };
+
+  requestAnimationFrame(function () { requestAnimationFrame(run); });
+  setTimeout(run, 120);
+}
+
+// ── Sticky header offset ─────────────────────────────────────────────────────
+//
+// The toolbar and the weekday header are both sticky at top: 0, so the toolbar's opaque
+// background covered SUN/MON/TUE entirely. styles.css offsets the header by
+// --fc-toolbar-h; this keeps that value honest. Measured rather than hardcoded because the
+// toolbar wraps to two rows at narrow widths.
+let _toolbarObserver = null;
+
+function _trackToolbarHeight() {
+  const root = document.querySelector(".fc");
+  const toolbar = document.querySelector(".fc-header-toolbar");
+  if (!root || !toolbar) return;
+
+  const apply = function () {
+    root.style.setProperty("--fc-toolbar-h", toolbar.offsetHeight + "px");
+  };
+  apply();
+
+  // Height changes on wrap, on font load, and on a view switch -- all of which a resize
+  // handler alone would miss.
+  if (window.ResizeObserver && !_toolbarObserver) {
+    _toolbarObserver = new ResizeObserver(apply);
+    _toolbarObserver.observe(toolbar);
+  }
+}
+
 const _loadingScreenStart = Date.now();
 let _initialLoadComplete = false;  // guards the function-source fetch against re-fetching from API
 let _loadingScreenDismissed = false;
@@ -179,6 +257,11 @@ document.addEventListener("DOMContentLoaded", function () {
       right: "dayGridMonth,listUpcoming",
     },
     height: "auto",
+    // Pin SUN/MON/TUE while the month grid scrolls. Previously nobody scrolled far enough
+    // for it to matter; now that the view opens at today, the header would otherwise be
+    // above the fold from the first paint and you would have to scroll up to learn which
+    // column is which.
+    stickyHeaderDates: true,
     fixedWeekCount: false,
     displayEventTime: false,
     eventSources: [
@@ -274,10 +357,42 @@ document.addEventListener("DOMContentLoaded", function () {
         calendar.changeView(target);
       }
     },
+    datesSet: function (info) {
+      // Fires on every view or date change -- paging months, hitting "today", and the
+      // first render. Scroll only when the range on screen actually contains today, so
+      // paging to an unrelated month leaves the scroll position alone.
+      //
+      // Deliberately not fired by a filter change: those call refetchEvents(), which does
+      // not change the date range, so someone reading a later week is not yanked back.
+      // Runs for every view: the toolbar exists in list view too, and re-observing after
+      // a view switch is what keeps the measured height current.
+      _trackToolbarHeight();
+
+      if (info.view.type.indexOf("dayGrid") !== 0) return;
+      const now = new Date();
+      if (now >= info.start && now < info.end) {
+        // Instant on first paint -- the page should simply open at today, with nothing to
+        // animate from. Smooth afterwards, when someone has hit "today" or paged back to
+        // this month and the movement tells them where they were taken.
+        _scrollToTodayWhenSettled(_scrolledToTodayOnce);
+        _scrolledToTodayOnce = true;
+      }
+    },
     loading: function (isLoading) {
       if (!isLoading) {
         if (!_loadingScreenDismissed) {
           _loadingScreenDismissed = true;
+
+          // Re-run the scroll once the tiles exist. datesSet fires before the fetch
+          // resolves, so the position it computed was against an empty grid and every row
+          // below today has since grown. Instant, not smooth: a correction to where the
+          // page already sits, not a movement anyone should watch.
+          //
+          // Inside this branch on purpose. `loading` also fires for the refetch behind
+          // every filter change, and scrolling there would drag someone reading a later
+          // week back to today each time they toggled a venue.
+          _scrollToTodayWhenSettled(false);
+
           const elapsed = Date.now() - _loadingScreenStart;
           const delay = Math.max(0, 1000 - elapsed);
           setTimeout(function () {
