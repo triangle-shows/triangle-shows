@@ -108,6 +108,19 @@ class TickPickOrganizerScraper(BaseScraper):
 
             ticket_url = data.get("url")
 
+            # Poster — schema.org's `image` is polymorphic: a bare URL string, a
+            # list of those (take the first), an ImageObject dict (`{"url": ...}`),
+            # or a list of ImageObject dicts. Anything else — a number, a nested
+            # list, a dict with no `url` — degrades to None rather than raising.
+            # A blank or whitespace-only value becomes None too, so it can't reach
+            # the frontend as a broken <img src>.
+            image = data.get("image")
+            if isinstance(image, list):
+                image = image[0] if image else None
+            if isinstance(image, dict):
+                image = image.get("url")
+            image_url = image.strip() or None if isinstance(image, str) else None
+
             return ScrapedEvent(
                 name=name,
                 date=event_date,
@@ -116,6 +129,7 @@ class TickPickOrganizerScraper(BaseScraper):
                 artist=name,
                 show_time=show_time,
                 ticket_url=ticket_url,
+                image_url=image_url,
                 source_url=ticket_url,
             )
         except Exception as e:
