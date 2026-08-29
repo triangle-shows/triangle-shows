@@ -53,6 +53,31 @@ def clean_title(text: Optional[str]) -> Optional[str]:
     return re.sub(r"\s+", " ", text).strip()
 
 
+# --- Scraped-URL validation ---
+
+def _validate_absolute_http_url(value: Optional[str]) -> Optional[str]:
+    """Normalize a scraped ``ticket_url``/``image_url`` to an absolute http(s) URL.
+
+    Both fields come straight off third-party venue pages and end up interpolated
+    into HTML attributes by the web client (``frontend/js/modal.js``), and into the
+    iCal feed (``app/api/feeds.py``, which reads the ORM column directly and never
+    passes through the API response schema). A relative, scheme-relative, or
+    ``javascript:``-scheme value is not a URL any of those consumers should trust.
+    This mirrors the ``/^https?:\\/\\//i`` prefix check the web client already
+    applies to ``ticket_url``, and extends it to ``image_url``, which had none.
+
+    A non-http(s) value normalizes to ``None`` rather than raising: one bad field
+    must not turn into a scrape failure and drop an otherwise good event from the
+    calendar.
+    """
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or not value.lower().startswith(("http://", "https://")):
+        return None
+    return value
+
+
 # --- ScrapedEvent Dataclass ---
 
 @dataclass
@@ -80,10 +105,16 @@ class ScrapedEvent:
     source_url: Optional[str] = None
 
     def __post_init__(self):
-        """Normalize the human-readable fields before anything hashes or stores them."""
+        """Normalize the human-readable and URL fields before anything hashes or stores them."""
         self.name = clean_title(self.name)
         self.artist = clean_title(self.artist)
         self.support_artists = clean_title(self.support_artists)
+        # ticket_url/image_url are third-party-sourced and are rendered into HTML
+        # attributes by the web client and into the iCal feed. Normalize both to an
+        # absolute http(s) URL or None at this single choke point, so no scraper has
+        # to remember to, and so nothing downstream has to re-derive the rule.
+        self.ticket_url = _validate_absolute_http_url(self.ticket_url)
+        self.image_url = _validate_absolute_http_url(self.image_url)
 
     @property
     def hash(self) -> str:
