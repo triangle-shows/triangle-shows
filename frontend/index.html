@@ -16,7 +16,7 @@
        week ruler; loaded so pixel treatments can be tried elsewhere without a round trip. -->
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Orbitron:wght@900&family=Silkscreen:wght@400;700&family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
-  <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="/css/styles.css?v={{ASSET_VERSION}}">
 
   <!-- Google Analytics -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-S37F3PHK0R"></script>
@@ -80,16 +80,18 @@
         <p class="eq-readout" id="eq-readout" aria-live="polite"></p>
       </div>
 
-      <!-- City Filter -->
+      <!-- Cities & Venues.
+           Replaces the former separate "City" chip row and flat "Venues" list: every
+           venue belongs to a city, so the venues now sit under theirs and each city
+           collapses. Rendered together by renderVenueFilters() in js/filters.js.
+           #venue-filters keeps its id because _updateVenueRestoreBtn() appends to it. -->
       <div class="filter-section">
-        <div class="filter-label">City</div>
-        <div class="chip-group" id="city-filters"></div>
-      </div>
-
-      <!-- Venue Filter -->
-      <div class="filter-section">
-        <div class="filter-label">Venues</div>
-        <div class="venue-list" id="venue-filters"></div>
+        <div class="filter-label">Cities &amp; Venues</div>
+        <!-- Cross-cutting chips that aren't a city — currently only Spotify's
+             "★ for you", appended here by js/spotify.js. Collapses to zero height
+             while empty. -->
+        <div class="chip-group quick-filters" id="quick-filters"></div>
+        <div class="city-groups" id="venue-filters"></div>
         <button class="btn-subscribe-venues" onclick="subscribeToVenues()">↗ get a cal for these venues</button>
         <p class="subscribe-hint">new shows will appear automatically!</p>
       </div>
@@ -98,7 +100,7 @@
       <div class="filter-section">
         <div class="filter-label">Show</div>
         <div class="chip-group">
-          <button class="chip" id="chip-non-music" onclick="toggleNonMusic()">include non-live music</button>
+          <button class="chip" id="chip-non-music" onclick="toggleNonMusic()">include non-live shows</button>
         </div>
         <p class="subscribe-hint">karaoke, trivia, theme nights &amp; other recurring events are hidden by default</p>
       </div>
@@ -147,12 +149,16 @@
     <!-- Calendar -->
     <main class="calendar-container">
       <div id="calendar"></div>
-      <footer class="site-credit">made by <a href="http://bsky.app/profile/tyfi.bsky.social" target="_blank" rel="noopener">@tyfi</a>. it's on <a href="https://github.com/triangle-shows/triangle-shows" target="_blank" rel="noopener">github</a>.</footer>
+      <footer class="site-credit">made by <a href="http://bsky.app/profile/tyfi.bsky.social" target="_blank" rel="noopener">@tyfi</a> and the gang at <a href="https://github.com/triangle-shows" target="_blank" rel="noopener">triangle-shows</a>. it's on <a href="https://github.com/triangle-shows/triangle-shows" target="_blank" rel="noopener">github</a>.</footer>
     </main>
   </div>
 
   <!-- Bottom-left utility bar: appears when shows are hearted or hidden -->
   <div class="favorites-bar" id="favorites-bar">
+    <!-- A view toggle, so it sits above the export action. aria-pressed rather than a
+         plain button: it has an on/off state, and the label alone doesn't convey which. -->
+    <button class="btn-favorites-only" id="btn-favorites-only" aria-pressed="false"
+            onclick="toggleFavoritesOnly()">♡ only my shows</button>
     <button class="btn-download-shows" onclick="downloadFavorites()">↓ download my shows</button>
     <button class="btn-restore-hidden" id="btn-restore-hidden" onclick="restoreHidden()">↺ restore hidden</button>
   </div>
@@ -168,12 +174,12 @@
   <script defer src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
 
   <!-- App JS -->
-  <script defer src="/js/design.js"></script>
-  <script defer src="/js/equalizer.js"></script>
-  <script defer src="/js/config.js"></script>
-  <script defer src="/js/filters.js"></script>
-  <script defer src="/js/modal.js"></script>
-  <script defer src="/js/favorites.js"></script>
-  <script defer src="/js/app.js"></script>
+  <script defer src="/js/design.js?v={{ASSET_VERSION}}"></script>
+  <script defer src="/js/equalizer.js?v={{ASSET_VERSION}}"></script>
+  <script defer src="/js/config.js?v={{ASSET_VERSION}}"></script>
+  <script defer src="/js/filters.js?v={{ASSET_VERSION}}"></script>
+  <script defer src="/js/modal.js?v={{ASSET_VERSION}}"></script>
+  <script defer src="/js/favorites.js?v={{ASSET_VERSION}}"></script>
+  <script defer src="/js/app.js?v={{ASSET_VERSION}}"></script>
 </body>
 </html>

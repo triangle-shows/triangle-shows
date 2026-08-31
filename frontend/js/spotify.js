@@ -197,7 +197,11 @@ function _onSpotifyReady() {
 }
 
 function _renderForYouChip() {
-  const chipGroup = document.getElementById("city-filters");
+  // #quick-filters is the row for chips that aren't a city. It used to be
+  // #city-filters, which no longer exists now that cities are group headers rather
+  // than a flat chip row; the fallback keeps this working against an older index.html.
+  const chipGroup = document.getElementById("quick-filters")
+                 || document.getElementById("city-filters");
   if (!chipGroup || document.getElementById("chip-for-you")) return;
   const chip = document.createElement("button");
   chip.id        = "chip-for-you";

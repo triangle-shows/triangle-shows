@@ -190,6 +190,31 @@ html[data-mode="light"][data-palette="wisteria"] {
   --eq-fav-hover: #12617f;
 }
 
+/* The "strong" favourite colour: same hue family as --eq-fav, taken darker.
+   Used by the favourites-only button's pressed background and by a hearted heart icon
+   on an event tile. Both need something --eq-fav cannot give them, for the same reason:
+   --eq-fav is tuned as a *graphic* sitting on --bg, because it paints equalizer bars.
+   Against a tile (--surface2) or behind button text it is too light — measured at
+   3.37-4.05 behind the button label (needs 4.5) and 2.64-2.96 as a heart on a light
+   tile (needs 3). These values clear both floors everywhere: worst 4.73 for the button
+   label and 3.70 for the heart, both on durham/light. */
+:root {
+  --fav-strong:       #ff8fa8;
+  --fav-strong-hover: #ffb3c4;
+}
+html[data-mode="light"] {
+  --fav-strong:       #b83a5c;
+  --fav-strong-hover: #9c2a48;
+}
+html[data-palette="wisteria"] {
+  --fav-strong:       #8ad5f0;
+  --fav-strong-hover: #b0e6f8;
+}
+html[data-mode="light"][data-palette="wisteria"] {
+  --fav-strong:       #12617f;
+  --fav-strong-hover: #0d4d66;
+}
+
 /* Durham Bulls light: warm desaturated brown bg, navy text */
 html[data-mode="light"][data-palette="durham"] {
   --bg:           #f5ece0;
@@ -515,11 +540,85 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   opacity: 0.45;
 }
 
-/* Venue list (rendered by JS as .venue-checkbox labels) */
-.venue-list {
+/* ── Cities & venues ───────────────────────────────────────────────────────────
+   Venues nest under a collapsible city header. Replaces the former flat .venue-list
+   and the separate city chip row. */
+
+.city-groups { display: flex; flex-direction: column; gap: 0.6rem; }
+
+/* Row for non-city chips (Spotify's "★ for you"). Takes no space while empty, so an
+   unconnected visitor sees no gap. */
+.quick-filters:not(:empty) { margin-bottom: 0.6rem; }
+
+.city-group-head { display: flex; align-items: center; gap: 0.3rem; }
+/* The chip fills the row so the whole width is a city filter target, with the caret a
+   separate leading hit area — one row, two distinct actions that can't steal each
+   other's clicks. */
+.city-group-head .city-chip { flex: 1 1 auto; text-align: left; }
+
+/* Disclosure caret, leading the row like a tree view. */
+.city-collapse {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 1px;
+  cursor: pointer;
+  /* --muted, not --dim. This is the control the whole feature hangs on, and --dim
+     measures 1.83:1 against --surface in dark mode — under the 3:1 an interactive
+     element needs. --dim is fine for inert decoration, not for this. */
+  color: var(--muted);
+  /* 0.6rem was legible only if you already knew it was there. */
+  font-size: 0.95rem;
+  line-height: 1;
+  /* Square, and at the 24px hit-target minimum. */
+  width: 24px;
+  min-height: 24px;
+  padding: 0;
+  transition: color 0.12s, border-color 0.12s;
+}
+.city-collapse:hover { color: var(--accent); border-color: var(--border); }
+.city-collapse:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+/* Venue count — a readout, not a control, so it sits outside both buttons. */
+.city-count {
+  flex-shrink: 0;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.6rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  opacity: 0.75;
+  min-width: 1.4em;
+  text-align: right;
+}
+
+.city-caret { display: inline-block; transition: transform 0.15s ease; }
+.city-group.collapsed .city-caret { transform: rotate(-90deg); }
+
+/* Venues indented under their city. The rule is positioned to descend from the middle
+   of the 24px caret, so it reads as a tree line rather than an arbitrary margin. */
+.city-venues {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  padding: 0.4rem 0 0.1rem 0.8rem;
+  margin-left: 11px;
+  border-left: 1px solid var(--border);
+}
+
+/* Collapse uses display:none deliberately, and the inputs must stay in the DOM.
+   _getFilteredEvents() builds its venue map with
+   querySelectorAll(".venue-checkbox input[type=checkbox]"), so unmounting a collapsed
+   city would silently drop its venues from the filter — the calendar would disagree
+   with a sidebar the visitor cannot see. display:none keeps them queryable while
+   removing them from layout and from the tab order, which is the same thing
+   `.venue-checkbox input { display: none }` already relies on further down. */
+.city-group.collapsed .city-venues { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .city-caret { transition: none; }
 }
 
 .venue-checkbox {
@@ -751,8 +850,22 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   position: relative;
   display: flex;
   flex-direction: column;
-  padding: 2px 32px 2px 4px; /* right padding reserves space for heart + hide */
+  padding: 2px 44px 2px 4px; /* right padding reserves space for heart + hide */
   overflow: hidden;
+}
+
+/* Only reserve room for the icons while they are actually on screen.
+   The icons are absolutely positioned, so changing this padding re-ellipsizes the title
+   without resizing the tile — nothing around it moves, the text just gets shorter. That
+   buys back roughly a character and a half in every month cell for the 99% of the time
+   the pointer is elsewhere.
+   Gated on (hover: hover) rather than a width: on touch devices the icons are permanently
+   visible, so the reserve has to be permanent too, and there is no hover to restore it.
+   Selector carries .fc to reach (0,2,0), so it wins over the width-based .ev override in
+   the responsive block below regardless of source order. */
+@media (hover: hover) {
+  .fc .ev          { padding-right: 6px; }
+  .fc .ev:hover    { padding-right: 44px; }
 }
 /* Event title.
    Was Space Mono 700 at 12px, which is the readability complaint that started this branch.
@@ -787,49 +900,57 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   text-overflow: ellipsis;
 }
 
-/* Heart / favorite button — shows on hover, 20% bigger than original */
+/* Heart / favorite button — revealed when the tile is hovered.
+   Colors are palette tokens, not the hardcoded rgba(255,255,255,…) they used to be.
+   That white was correct while tiles were saturated dark fills; once the gutter
+   treatment moved tile text onto --surface2 it became near-invisible in light mode. */
 .ev-heart {
   position: absolute;
   top: 50%;
-  right: 17px;
+  right: 24px;
   transform: translateY(-50%);
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 0.84rem;
+  font-size: 0.95rem;
   line-height: 1;
-  color: rgba(255,255,255,0.5);
-  padding: 1px 2px;
+  color: var(--muted);
+  padding: 2px 3px;
   opacity: 0;
   transition: opacity 0.15s, color 0.12s;
   z-index: 1;
   user-select: none;
 }
 .ev:hover .ev-heart        { opacity: 1; }
-.ev-heart.hearted          { opacity: 1 !important; color: #ff8fa8; }
-.ev-heart:hover            { color: rgba(255,255,255,0.9); }
-.ev-heart.hearted:hover    { color: #ff5580; }
+/* --fav-strong rather than a literal #ff8fa8, and rather than --eq-fav: the token
+   carries the light-mode and wisteria variants, so a hearted show stays visible on warm
+   paper and stops clashing on the pink palette. --eq-fav itself measures only 2.64-2.96
+   against a light tile, because it is tuned to sit on --bg rather than on --surface2. */
+.ev-heart.hearted          { opacity: 1 !important; color: var(--fav-strong); }
+.ev-heart:hover            { color: var(--accent); }
+.ev-heart.hearted:hover    { color: var(--fav-strong-hover); }
 
 /* Hide button — dismiss event until page refresh */
 .ev-hide {
   position: absolute;
   top: 50%;
-  right: 2px;
+  right: 3px;
   transform: translateY(-50%);
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 0.62rem;
+  /* Was 0.62rem — roughly 10px, and the smallest interactive thing on the page. */
+  font-size: 0.78rem;
   line-height: 1;
-  color: rgba(255,255,255,0.4);
-  padding: 1px 2px;
+  color: var(--muted);
+  padding: 2px 3px;
   opacity: 0;
   transition: opacity 0.15s, color 0.12s;
   z-index: 1;
   user-select: none;
 }
 .ev:hover .ev-hide  { opacity: 1; }
-.ev-hide:hover      { color: rgba(255,255,255,0.9); }
+.ev-hide:hover      { color: var(--accent); }
 
 /* Past events — greyed out */
 .fc-event.ev-past { opacity: 0.45; }
@@ -1048,6 +1169,7 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   transform: translateY(0);
 }
 
+.btn-favorites-only,
 .btn-download-shows,
 .btn-restore-hidden {
   display: inline-block;
@@ -1065,6 +1187,7 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   transition: background 0.15s, color 0.15s;
   opacity: 0.72;
 }
+.btn-favorites-only:hover,
 .btn-download-shows:hover,
 .btn-restore-hidden:hover {
   background: var(--accent);
@@ -1073,6 +1196,30 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
 }
 /* Restore button: slightly subdued by default */
 .btn-restore-hidden { opacity: 0.55; }
+
+/* Favourites-only toggle.
+   The other two buttons are actions — press and something happens. This one is a mode,
+   and the pressed state has to be unmistakable: a filtered calendar that looks
+   unfiltered is the failure worth designing against. So the active state is a filled
+   button in the heart pink rather than another accent outline, which also stops it
+   reading as "hovered". */
+.btn-favorites-only.active {
+  background: var(--fav-strong);
+  border-color: var(--fav-strong);
+  color: var(--bg);
+  opacity: 1;
+}
+.btn-favorites-only.active:hover {
+  background: var(--fav-strong-hover);
+  border-color: var(--fav-strong-hover);
+  color: var(--bg);
+}
+.btn-favorites-only:focus-visible,
+.btn-download-shows:focus-visible,
+.btn-restore-hidden:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 /* First-appear bounce for the buttons */
 .favorites-bar.visible .btn-download-shows,
@@ -1151,8 +1298,10 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
 
   /* List view: clip overflow on mobile; title fills all available width */
   .fc { overflow: hidden; }
-  /* Reduce ev right padding on mobile */
-  .ev { padding-right: 20px; }
+  /* List view keeps the reserve: the icons are permanently visible here (no hover to
+     reveal them), and titles wrap rather than truncate, so the reserve costs a little
+     line width and never hides text. 20px used to be under the icons' own width. */
+  .fc-list-event .ev { padding-right: 40px; }
 
   /* Ko-fi: hide from header, show at bottom of sidebar */
   .app-header .kofi-wrap { display: none; }
@@ -1176,12 +1325,25 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   .palette-btn { width: 26px; height: 26px; }
 
   /* Heart + hide: always slightly visible on mobile (no real hover) */
-  .ev-heart { opacity: 0.4; font-size: 0.84rem; }
-  .ev-hide  { opacity: 0.3; }
+  .ev-heart { opacity: 0.75; font-size: 0.95rem; }
+  .ev-hide  { opacity: 0.6;  font-size: 0.78rem; }
   .venue-hide-btn { opacity: 0.3; }
 
   /* Bottom bar: left edge on mobile (sidebar is hidden) */
   .favorites-bar { left: 0.75rem; }
+}
+
+/* Month view on a phone: drop the icons entirely.
+   A day cell is ~52px there and a tile ~47px, so two permanently-visible controls plus
+   a title does not fit — measured, the title was allotted 0px and the tile rendered as
+   nothing but a heart and a cross. The month grid on a phone is a density overview;
+   hearting and hiding belong to the list view, which is the default at that width
+   anyway. Also gated on (hover: none) so a merely narrow desktop window keeps its
+   hover-revealed icons instead of losing them. */
+@media (max-width: 768px) and (hover: none) {
+  .fc-daygrid-event .ev-heart,
+  .fc-daygrid-event .ev-hide { display: none; }
+  .fc-daygrid-event .ev { padding-right: 4px; }
 }
 
 /* Light mode: darken the modal overlay slightly less */
@@ -1195,9 +1357,10 @@ html[data-mode="light"] .modal-overlay {
 /* Light mode: list view needs dark text (events have no colored bg in list view) */
 html[data-mode="light"] .fc-list-event .ev-title { color: var(--text); }
 html[data-mode="light"] .fc-list-event .ev-venue { color: var(--muted); }
-html[data-mode="light"] .fc-list-event .ev-heart { color: rgba(0,0,0,0.35); }
-html[data-mode="light"] .fc-list-event .ev-hide  { color: rgba(0,0,0,0.25); }
-html[data-mode="light"] .venue-hide-btn          { color: rgba(0,0,0,0.35); }
+/* The .ev-heart / .ev-hide light-mode overrides that were here are gone: they existed
+   only to undo a hardcoded white base, and the base is now --muted, which is already
+   palette- and mode-correct. */
+html[data-mode="light"] .venue-hide-btn          { color: var(--muted); }
 
 /* Light mode needs nothing special for daygrid events now. The block that used to live
    here put them on --surface2 and colored the title with the venue color, to rescue the
@@ -1355,10 +1518,10 @@ html[data-mode="light"] .fc .fc-list-event .ev {
 .fc .fc-daygrid-event:hover {
   background-color: color-mix(in srgb, var(--venue-color, var(--accent)) 14%, var(--surface2)) !important;
 }
-.fc .fc-daygrid-event .ev-heart,
-.fc .fc-daygrid-event .ev-hide {
-  color: var(--dim);
-}
+/* No daygrid-specific colour for the icons any more. This block set them to --dim,
+   which measures 1.83:1 against --surface2 in dark mode -- under the 3:1 an interactive
+   control needs, and the reason they were hard to read on hover. The base .ev-heart /
+   .ev-hide rules now use --muted, which works in both modes. */
 
 /* The list view's own dot is drawn by FullCalendar from the event's border color, which
    is the unbrightened seed value -- same invisibility problem on a dark surface. */
