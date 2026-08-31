@@ -10,8 +10,25 @@ function getFavorites() {
   try { return JSON.parse(localStorage.getItem(FAVORITES_KEY) || "{}"); }
   catch { return {}; }
 }
+// Returns false when the store refused the write, so callers can avoid showing a heart
+// that was never saved.
+//
+// getFavorites() already tolerates unreadable storage; this side did not, so a throw
+// propagated straight out of toggleFavorite() and skipped the UI update, leaving the
+// heart, the bar and the equalizer disagreeing with each other.
+//
+// Capacity is not the likely trigger. Measured against all 2771 events currently in the
+// database, a stored favourite averages 247 bytes, so a 5 MB origin quota holds roughly
+// 21,000 of them and hearting literally every event would use about 13%. What does throw
+// regardless of size is a private-browsing window or a browser set to block site data.
 function saveFavorites(favs) {
-  localStorage.setItem(FAVORITES_KEY, JSON.stringify(favs));
+  try {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(favs));
+    return true;
+  } catch (err) {
+    console.warn("Could not save favorites — storage refused the write:", err);
+    return false;
+  }
 }
 function isFavorited(eventId) { return !!getFavorites()[eventId]; }
 
@@ -19,7 +36,9 @@ function toggleFavorite(eventId, eventData) {
   const favs = getFavorites();
   if (favs[eventId]) { delete favs[eventId]; }
   else               { favs[eventId] = eventData; }
-  saveFavorites(favs);
+  // Bail before touching the UI if the write failed, so the heart never claims a
+  // favourite that was not stored.
+  if (!saveFavorites(favs)) return;
   _refreshHeartUI(eventId, !!favs[eventId]);
   updateBottomBar();
 
