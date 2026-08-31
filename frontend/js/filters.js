@@ -19,6 +19,77 @@ let activeFilters = {
 // so we never call setProp on EventImpl objects during filter passes.
 let _allEventsCache = [];
 
+// ── Collapsed city groups ─────────────────────────────────────────────────────
+//
+// Which city groups are folded shut in the sidebar. Purely presentational: collapsing
+// a city must never change which events are shown, or the calendar would silently
+// disagree with the filters the visitor can see. Persisted because every other
+// sidebar toggle is.
+const COLLAPSED_CITIES_KEY = "triangle-shows-collapsed-cities";
+
+// The persisted list, or null when the visitor has never folded anything.
+function _storedCollapsedCities() {
+  const raw = localStorage.getItem(COLLAPSED_CITIES_KEY);
+  if (raw === null) return null;
+  try { return new Set(JSON.parse(raw)); }
+  catch { return new Set(); }
+}
+
+// Which cities are folded shut. Everything starts folded: the point of grouping is to
+// shorten the sidebar, and four headers plus twenty-two rows is *longer* than the flat
+// list this replaced. Once the visitor folds or unfolds anything, their explicit choice
+// is stored and used instead.
+function getCollapsedCities() {
+  const stored = _storedCollapsedCities();
+  if (stored) return stored;
+  return new Set(venues.map((v) => v.city));
+}
+
+function saveCollapsedCities(set) {
+  try { localStorage.setItem(COLLAPSED_CITIES_KEY, JSON.stringify([...set])); }
+  catch { /* private browsing: the fold still works, it just won't persist */ }
+}
+
+// City names go into element ids, so reduce them to something id-safe.
+function _citySlug(city) {
+  return String(city).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function toggleCityCollapse(city) {
+  const collapsed = getCollapsedCities();
+  if (collapsed.has(city)) collapsed.delete(city);
+  else                     collapsed.add(city);
+  saveCollapsedCities(collapsed);
+
+  const group = document.querySelector(`.city-group[data-city="${city}"]`);
+  if (!group) return;
+
+  const isCollapsed = collapsed.has(city);
+  group.classList.toggle("collapsed", isCollapsed);
+
+  const btn = group.querySelector(".city-collapse");
+  if (btn) {
+    const n = group.querySelectorAll(".venue-checkbox").length;
+    btn.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+    btn.setAttribute(
+      "aria-label",
+      `${isCollapsed ? "Expand" : "Collapse"} ${city}, ${n} venue${n === 1 ? "" : "s"}`
+    );
+  }
+  // Deliberately no applyAllFilters() — see the note on COLLAPSED_CITIES_KEY.
+}
+
+// The count on a city header is "venues you can see here", so it has to be refreshed
+// when one is hidden rather than only on a full re-render.
+function _updateCityCounts() {
+  document.querySelectorAll(".city-group").forEach((group) => {
+    const count = group.querySelectorAll(".venue-checkbox").length;
+    const el = group.querySelector(".city-count");
+    if (el) el.textContent = String(count);
+  });
+}
+
+
 // ── Hidden venues ─────────────────────────────────────────────────────────────
 const HIDDEN_VENUES_KEY = "triangle-shows-hidden-venues";
 
@@ -32,7 +103,12 @@ function hideVenue(slug) {
   hidden.add(slug);
   localStorage.setItem(HIDDEN_VENUES_KEY, JSON.stringify([...hidden]));
   const label = document.querySelector(`.venue-checkbox input[data-venue="${slug}"]`)?.closest(".venue-checkbox");
+  const group = label?.closest(".city-group");
   if (label) label.remove();
+  // Drop a city whose last visible venue just went. An empty group still showing a
+  // live filter chip reads as a rendering bug.
+  if (group && !group.querySelector(".venue-checkbox")) group.remove();
+  _updateCityCounts();
   _updateVenueRestoreBtn();
   applyAllFilters();
   updateCityChipStates();
@@ -77,32 +153,22 @@ async function loadVenues(attempt = 0) {
 }
 
 function renderFilters() {
-  renderCityFilters();
+  // Cities and venues render together now — the city rows are the group headers.
   renderVenueFilters();
   setupSearch();
 
   updateCityChipStates();
 }
 
-function renderCityFilters() {
-  const container = document.getElementById("city-filters");
-  const cities = [...new Set(venues.map((v) => v.city))].sort();
-
-  container.innerHTML = cities
-    .map((city) => {
-      const colors = CITY_COLORS[city] || {};
-      const border = colors.border || "var(--dim)";
-      const activeBg = colors.activeBg || "var(--accent-bg)";
-      return `<button class="chip city-chip" data-city="${city}"
-        style="--chip-border: ${border}; --chip-active-bg: ${activeBg}"
-        onclick="toggleCity('${city}')">${city}</button>`;
-    })
-    .join("");
-}
-
+// Render every city as a collapsible group with its venues nested underneath.
+//
+// The city header keeps the `.city-chip` class and `data-city`, and each venue keeps
+// `data-venue-city`, so toggleCity() and updateCityChipStates() work against this
+// markup unchanged — they query by those attributes, not by position.
 function renderVenueFilters() {
   const container = document.getElementById("venue-filters");
   const hidden = getHiddenVenues();
+  const collapsed = getCollapsedCities();
 
   // Preserve which venues are currently checked so restoring a hidden venue
   // doesn't reset other venues' selected/unselected state.
@@ -112,21 +178,55 @@ function renderVenueFilters() {
   });
   const hasExistingState = currentChecked.size > 0;
 
-  container.innerHTML = venues
-    .filter((v) => !hidden.has(v.slug))
-    .map((v) => {
-      // Newly-visible venues (just restored) default to checked.
-      // Existing venues preserve their prior state.
-      const isChecked = !hasExistingState || currentChecked.has(v.slug) || !document.querySelector(`[data-venue="${v.slug}"]`);
+  const shown = venues.filter((v) => !hidden.has(v.slug));
+  // A city with every venue hidden gets no group at all, rather than an empty one.
+  const cities = [...new Set(shown.map((v) => v.city))].sort();
+
+  container.innerHTML = cities
+    .map((city) => {
+      const colors   = CITY_COLORS[city] || {};
+      const border   = colors.border   || "var(--dim)";
+      const activeBg = colors.activeBg || "var(--accent-bg)";
+      const cityVenues  = shown.filter((v) => v.city === city);
+      const isCollapsed = collapsed.has(city);
+      const venuesId    = `city-venues-${_citySlug(city)}`;
+
+      const rows = cityVenues
+        .map((v) => {
+          // Newly-visible venues (just restored) default to checked.
+          // Existing venues preserve their prior state.
+          const isChecked = !hasExistingState || currentChecked.has(v.slug) || !document.querySelector(`[data-venue="${v.slug}"]`);
+          return `
+        <label class="venue-checkbox" data-venue-city="${city}">
+          <input type="checkbox" data-venue="${v.slug}" ${isChecked ? "checked" : ""} onchange="toggleVenue('${v.slug}')">
+          <span class="venue-dot" style="background-color: ${v.color}"></span>
+          <span class="venue-label">${v.name}</span>
+          <button class="venue-hide-btn" data-slug="${v.slug}" tabindex="-1" aria-label="Hide ${v.name}">✕</button>
+        </label>`;
+        })
+        .join("");
+
+      // Caret first so it reads as the disclosure control for the row, the way a
+      // tree view does. The count is a plain span rather than part of either button —
+      // it's a readout, and putting it inside the caret's hit area implied otherwise.
       return `
-      <label class="venue-checkbox" data-venue-city="${v.city}">
-        <input type="checkbox" data-venue="${v.slug}" ${isChecked ? "checked" : ""} onchange="toggleVenue('${v.slug}')">
-        <span class="venue-dot" style="background-color: ${v.color}"></span>
-        <span class="venue-label">${v.name}</span>
-        <button class="venue-hide-btn" data-slug="${v.slug}" tabindex="-1" aria-label="Hide ${v.name}">✕</button>
-      </label>`;
+      <div class="city-group${isCollapsed ? " collapsed" : ""}" data-city="${city}">
+        <div class="city-group-head">
+          <button class="city-collapse" data-city="${city}"
+                  aria-expanded="${isCollapsed ? "false" : "true"}"
+                  aria-controls="${venuesId}"
+                  aria-label="${isCollapsed ? "Expand" : "Collapse"} ${city}, ${cityVenues.length} venue${cityVenues.length === 1 ? "" : "s"}"
+                  onclick="toggleCityCollapse('${city}')"><span class="city-caret" aria-hidden="true">▾</span></button>
+          <button class="chip city-chip" data-city="${city}"
+                  style="--chip-border: ${border}; --chip-active-bg: ${activeBg}"
+                  onclick="toggleCity('${city}')">${city}</button>
+          <span class="city-count" aria-hidden="true">${cityVenues.length}</span>
+        </div>
+        <div class="city-venues" id="${venuesId}">${rows}</div>
+      </div>`;
     })
     .join("");
+
   container.querySelectorAll(".venue-hide-btn").forEach((btn) => {
     btn.addEventListener("click", function (e) {
       e.preventDefault();
