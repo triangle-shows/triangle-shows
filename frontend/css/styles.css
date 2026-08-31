@@ -525,17 +525,18 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
    unconnected visitor sees no gap. */
 .quick-filters:not(:empty) { margin-bottom: 0.6rem; }
 
-.city-group-head { display: flex; align-items: stretch; gap: 0.3rem; }
-/* The chip fills the row so the whole width is a city filter target, and the caret
-   stays a separate, smaller hit area — one row, two distinct actions. */
+.city-group-head { display: flex; align-items: center; gap: 0.3rem; }
+/* The chip fills the row so the whole width is a city filter target, with the caret a
+   separate leading hit area — one row, two distinct actions that can't steal each
+   other's clicks. */
 .city-group-head .city-chip { flex: 1 1 auto; text-align: left; }
 
+/* Disclosure caret, leading the row like a tree view. */
 .city-collapse {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 0.3rem;
+  justify-content: center;
   background: none;
   border: 1px solid transparent;
   border-radius: 1px;
@@ -544,28 +545,41 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
      measures 1.83:1 against --surface in dark mode — under the 3:1 an interactive
      element needs. --dim is fine for inert decoration, not for this. */
   color: var(--muted);
-  font-family: 'Space Mono', monospace;
-  font-size: 0.6rem;
-  /* min-height carries the hit target to 24px; padding alone left it at 22. */
+  /* 0.6rem was legible only if you already knew it was there. */
+  font-size: 0.95rem;
+  line-height: 1;
+  /* Square, and at the 24px hit-target minimum. */
+  width: 24px;
   min-height: 24px;
-  min-width: 34px;
-  padding: 0 0.35rem;
+  padding: 0;
   transition: color 0.12s, border-color 0.12s;
 }
 .city-collapse:hover { color: var(--accent); border-color: var(--border); }
 .city-collapse:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 
-.city-count { font-variant-numeric: tabular-nums; opacity: 0.75; }
+/* Venue count — a readout, not a control, so it sits outside both buttons. */
+.city-count {
+  flex-shrink: 0;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.6rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  opacity: 0.75;
+  min-width: 1.4em;
+  text-align: right;
+}
+
 .city-caret { display: inline-block; transition: transform 0.15s ease; }
 .city-group.collapsed .city-caret { transform: rotate(-90deg); }
 
-/* Venues indented under their city, with a rule tying them to the group. */
+/* Venues indented under their city. The rule is positioned to descend from the middle
+   of the 24px caret, so it reads as a tree line rather than an arbitrary margin. */
 .city-venues {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  padding: 0.4rem 0 0.1rem 0.55rem;
-  margin-left: 0.2rem;
+  padding: 0.4rem 0 0.1rem 0.8rem;
+  margin-left: 11px;
   border-left: 1px solid var(--border);
 }
 

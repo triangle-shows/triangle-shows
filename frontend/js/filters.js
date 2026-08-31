@@ -27,9 +27,22 @@ let _allEventsCache = [];
 // sidebar toggle is.
 const COLLAPSED_CITIES_KEY = "triangle-shows-collapsed-cities";
 
-function getCollapsedCities() {
-  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_CITIES_KEY) || "[]")); }
+// The persisted list, or null when the visitor has never folded anything.
+function _storedCollapsedCities() {
+  const raw = localStorage.getItem(COLLAPSED_CITIES_KEY);
+  if (raw === null) return null;
+  try { return new Set(JSON.parse(raw)); }
   catch { return new Set(); }
+}
+
+// Which cities are folded shut. Everything starts folded: the point of grouping is to
+// shorten the sidebar, and four headers plus twenty-two rows is *longer* than the flat
+// list this replaced. Once the visitor folds or unfolds anything, their explicit choice
+// is stored and used instead.
+function getCollapsedCities() {
+  const stored = _storedCollapsedCities();
+  if (stored) return stored;
+  return new Set(venues.map((v) => v.city));
 }
 
 function saveCollapsedCities(set) {
@@ -56,8 +69,12 @@ function toggleCityCollapse(city) {
 
   const btn = group.querySelector(".city-collapse");
   if (btn) {
+    const n = group.querySelectorAll(".venue-checkbox").length;
     btn.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
-    btn.setAttribute("aria-label", `${isCollapsed ? "Expand" : "Collapse"} ${city} venues`);
+    btn.setAttribute(
+      "aria-label",
+      `${isCollapsed ? "Expand" : "Collapse"} ${city}, ${n} venue${n === 1 ? "" : "s"}`
+    );
   }
   // Deliberately no applyAllFilters() — see the note on COLLAPSED_CITIES_KEY.
 }
@@ -189,17 +206,21 @@ function renderVenueFilters() {
         })
         .join("");
 
+      // Caret first so it reads as the disclosure control for the row, the way a
+      // tree view does. The count is a plain span rather than part of either button —
+      // it's a readout, and putting it inside the caret's hit area implied otherwise.
       return `
       <div class="city-group${isCollapsed ? " collapsed" : ""}" data-city="${city}">
         <div class="city-group-head">
-          <button class="chip city-chip" data-city="${city}"
-                  style="--chip-border: ${border}; --chip-active-bg: ${activeBg}"
-                  onclick="toggleCity('${city}')">${city}</button>
           <button class="city-collapse" data-city="${city}"
                   aria-expanded="${isCollapsed ? "false" : "true"}"
                   aria-controls="${venuesId}"
-                  aria-label="${isCollapsed ? "Expand" : "Collapse"} ${city} venues"
-                  onclick="toggleCityCollapse('${city}')"><span class="city-count">${cityVenues.length}</span><span class="city-caret" aria-hidden="true">▾</span></button>
+                  aria-label="${isCollapsed ? "Expand" : "Collapse"} ${city}, ${cityVenues.length} venue${cityVenues.length === 1 ? "" : "s"}"
+                  onclick="toggleCityCollapse('${city}')"><span class="city-caret" aria-hidden="true">▾</span></button>
+          <button class="chip city-chip" data-city="${city}"
+                  style="--chip-border: ${border}; --chip-active-bg: ${activeBg}"
+                  onclick="toggleCity('${city}')">${city}</button>
+          <span class="city-count" aria-hidden="true">${cityVenues.length}</span>
         </div>
         <div class="city-venues" id="${venuesId}">${rows}</div>
       </div>`;
