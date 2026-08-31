@@ -12,6 +12,12 @@ let activeFilters = {
   search: "",
   forYou: false,
   includeNonMusic: localStorage.getItem(INCLUDE_NON_MUSIC_KEY) === "1",
+  // Deliberately NOT persisted, unlike includeNonMusic. That one is a standing
+  // preference ("I want to see trivia nights"); this is a transient "just show me
+  // mine" view. A view filter that survives a reload is how someone concludes the
+  // calendar is broken — they come back to a near-empty month and have no memory of
+  // switching anything on.
+  favoritesOnly: false,
 };
 
 // Cache of all events from the API (plain JS objects). Populated once on initial
@@ -278,6 +284,14 @@ function toggleForYou() {
 
 // Toggle whether non-live-music events (karaoke/trivia/theme nights/etc.) are shown.
 // Choice is persisted so it sticks across visits. Default (chip inactive) hides them.
+// Show only hearted shows. The button lives in the bottom-left favourites bar, so
+// updateBottomBar() is refreshed here to keep its label and pressed state in sync.
+function toggleFavoritesOnly() {
+  activeFilters.favoritesOnly = !activeFilters.favoritesOnly;
+  if (typeof updateBottomBar === "function") updateBottomBar();
+  applyAllFilters();
+}
+
 function toggleNonMusic() {
   activeFilters.includeNonMusic = !activeFilters.includeNonMusic;
   localStorage.setItem(INCLUDE_NON_MUSIC_KEY, activeFilters.includeNonMusic ? "1" : "0");
@@ -312,10 +326,28 @@ function _checkEventVisible(ev, venueMap) {
   // wouldn't be in venueMap and would otherwise pass through unchecked.
   if (SITE_CONFIG.city && props.venue_city !== SITE_CONFIG.city) return false;
 
+  const hearted = typeof isFavorited === "function" && isFavorited(ev.id);
+
+  // Favourites-only view. Composes with the venue and search filters below rather than
+  // overriding them, because those are explicit choices — unticking a venue should keep
+  // working even if you hearted something there.
+  if (activeFilters.favoritesOnly && !hearted) return false;
+
   // Non-live-music events (karaoke, trivia, theme nights, recurring series) are
   // hidden unless the visitor opts in via the toggle. Only an explicit `false`
   // hides — missing/true always shows, so unclassified data is never dropped.
-  if (!activeFilters.includeNonMusic && props.is_live_music === false) return false;
+  //
+  // Inside the favourites-only view a hearted show is exempt: the flag is the
+  // classifier's guess, and someone who deliberately hearted a karaoke night has
+  // overruled it. Without this the button could read "only my shows (5)" beside a
+  // calendar showing two — the kind of quiet disagreement that reads as a bug.
+  //
+  // Scoped to that view on purpose. Outside it the toggle keeps meaning "hide this
+  // category", so the normal calendar behaves exactly as before.
+  const exemptAsFavorite = activeFilters.favoritesOnly && hearted;
+  if (!activeFilters.includeNonMusic && props.is_live_music === false && !exemptAsFavorite) {
+    return false;
+  }
 
   // "For you" mode: show only Spotify-matched events, ignoring venue filters.
   if (activeFilters.forYou) {

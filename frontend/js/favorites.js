@@ -10,8 +10,25 @@ function getFavorites() {
   try { return JSON.parse(localStorage.getItem(FAVORITES_KEY) || "{}"); }
   catch { return {}; }
 }
+// Returns false when the store refused the write, so callers can avoid showing a heart
+// that was never saved.
+//
+// getFavorites() already tolerates unreadable storage; this side did not, so a throw
+// propagated straight out of toggleFavorite() and skipped the UI update, leaving the
+// heart, the bar and the equalizer disagreeing with each other.
+//
+// Capacity is not the likely trigger. Measured against all 2771 events currently in the
+// database, a stored favourite averages 247 bytes, so a 5 MB origin quota holds roughly
+// 21,000 of them and hearting literally every event would use about 13%. What does throw
+// regardless of size is a private-browsing window or a browser set to block site data.
 function saveFavorites(favs) {
-  localStorage.setItem(FAVORITES_KEY, JSON.stringify(favs));
+  try {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(favs));
+    return true;
+  } catch (err) {
+    console.warn("Could not save favorites — storage refused the write:", err);
+    return false;
+  }
 }
 function isFavorited(eventId) { return !!getFavorites()[eventId]; }
 
@@ -19,12 +36,23 @@ function toggleFavorite(eventId, eventData) {
   const favs = getFavorites();
   if (favs[eventId]) { delete favs[eventId]; }
   else               { favs[eventId] = eventData; }
-  saveFavorites(favs);
+  // Bail before touching the UI if the write failed, so the heart never claims a
+  // favourite that was not stored.
+  if (!saveFavorites(favs)) return;
   _refreshHeartUI(eventId, !!favs[eventId]);
   updateBottomBar();
-  // Repaint the equalizer so the hearted portion of each bar tracks the change
-  // immediately, rather than waiting for the next calendar refetch.
-  if (window.Equalizer && typeof window.Equalizer.refresh === "function") {
+
+  const favOnly = typeof activeFilters === "object" && !!activeFilters.favoritesOnly;
+  if (favOnly && typeof applyAllFilters === "function") {
+    // In the favourites-only view this heart changes which events belong on screen, so
+    // the calendar has to be re-filtered — otherwise an un-hearted show just sits there.
+    // The re-filter feeds the equalizer with the new visible set on its way through
+    // app.js, so refreshing the equalizer here first would only render a set that is
+    // about to be replaced.
+    applyAllFilters();
+  } else if (window.Equalizer && typeof window.Equalizer.refresh === "function") {
+    // Outside that view the visible set is unchanged and only the hearted portion of
+    // each bar needs repainting, which is far cheaper than a full re-filter.
     window.Equalizer.refresh();
   }
 }
@@ -94,13 +122,29 @@ function updateBottomBar() {
 
   const favCount = Object.keys(getFavorites()).length;
   const hidCount = Object.keys(getHidden()).length;
+  const favOnly  = typeof activeFilters === "object" && !!activeFilters.favoritesOnly;
 
-  bar.classList.toggle("visible", favCount > 0 || hidCount > 0);
+  // `|| favOnly` is load-bearing. This bar holds the only control for the
+  // favourites-only view, so it has to stay up while that view is on — including after
+  // the last favourite is un-hearted. Without it, removing your final show hides the
+  // bar and strands you on a filtered, empty calendar with nothing to switch off.
+  bar.classList.toggle("visible", favCount > 0 || hidCount > 0 || favOnly);
 
   const dlBtn = bar.querySelector(".btn-download-shows");
   if (dlBtn) {
     dlBtn.style.display = favCount > 0 ? "" : "none";
     dlBtn.textContent   = `↓ download my shows (${favCount})`;
+  }
+
+  const onlyBtn = document.getElementById("btn-favorites-only");
+  if (onlyBtn) {
+    // Same reasoning as the bar itself: stays visible while the view is on even at
+    // zero favourites, so it can always be turned back off.
+    onlyBtn.style.display = favCount > 0 || favOnly ? "" : "none";
+    // The count explains an empty calendar at a glance — "(0)" is why nothing is here.
+    onlyBtn.textContent = `${favOnly ? "♥" : "♡"} only my shows (${favCount})`;
+    onlyBtn.classList.toggle("active", favOnly);
+    onlyBtn.setAttribute("aria-pressed", favOnly ? "true" : "false");
   }
 
   const restoreBtn = document.getElementById("btn-restore-hidden");

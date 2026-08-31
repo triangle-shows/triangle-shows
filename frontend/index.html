@@ -155,6 +155,10 @@
 
   <!-- Bottom-left utility bar: appears when shows are hearted or hidden -->
   <div class="favorites-bar" id="favorites-bar">
+    <!-- A view toggle, so it sits above the export action. aria-pressed rather than a
+         plain button: it has an on/off state, and the label alone doesn't convey which. -->
+    <button class="btn-favorites-only" id="btn-favorites-only" aria-pressed="false"
+            onclick="toggleFavoritesOnly()">♡ only my shows</button>
     <button class="btn-download-shows" onclick="downloadFavorites()">↓ download my shows</button>
     <button class="btn-restore-hidden" id="btn-restore-hidden" onclick="restoreHidden()">↺ restore hidden</button>
   </div>
