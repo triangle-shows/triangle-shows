@@ -853,6 +853,20 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   padding: 2px 44px 2px 4px; /* right padding reserves space for heart + hide */
   overflow: hidden;
 }
+
+/* Only reserve room for the icons while they are actually on screen.
+   The icons are absolutely positioned, so changing this padding re-ellipsizes the title
+   without resizing the tile — nothing around it moves, the text just gets shorter. That
+   buys back roughly a character and a half in every month cell for the 99% of the time
+   the pointer is elsewhere.
+   Gated on (hover: hover) rather than a width: on touch devices the icons are permanently
+   visible, so the reserve has to be permanent too, and there is no hover to restore it.
+   Selector carries .fc to reach (0,2,0), so it wins over the width-based .ev override in
+   the responsive block below regardless of source order. */
+@media (hover: hover) {
+  .fc .ev          { padding-right: 6px; }
+  .fc .ev:hover    { padding-right: 44px; }
+}
 /* Event title.
    Was Space Mono 700 at 12px, which is the readability complaint that started this branch.
    Bold works against a monospace at this size: Space Mono's counters are tight to begin
@@ -1284,10 +1298,10 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
 
   /* List view: clip overflow on mobile; title fills all available width */
   .fc { overflow: hidden; }
-  /* Mobile reserves less than desktop, but 20px was under the icons' own width even
-     before they grew — and on mobile they are permanently visible rather than
-     hover-revealed, so a title running underneath them is guaranteed, not occasional. */
-  .ev { padding-right: 40px; }
+  /* List view keeps the reserve: the icons are permanently visible here (no hover to
+     reveal them), and titles wrap rather than truncate, so the reserve costs a little
+     line width and never hides text. 20px used to be under the icons' own width. */
+  .fc-list-event .ev { padding-right: 40px; }
 
   /* Ko-fi: hide from header, show at bottom of sidebar */
   .app-header .kofi-wrap { display: none; }
@@ -1317,6 +1331,19 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
 
   /* Bottom bar: left edge on mobile (sidebar is hidden) */
   .favorites-bar { left: 0.75rem; }
+}
+
+/* Month view on a phone: drop the icons entirely.
+   A day cell is ~52px there and a tile ~47px, so two permanently-visible controls plus
+   a title does not fit — measured, the title was allotted 0px and the tile rendered as
+   nothing but a heart and a cross. The month grid on a phone is a density overview;
+   hearting and hiding belong to the list view, which is the default at that width
+   anyway. Also gated on (hover: none) so a merely narrow desktop window keeps its
+   hover-revealed icons instead of losing them. */
+@media (max-width: 768px) and (hover: none) {
+  .fc-daygrid-event .ev-heart,
+  .fc-daygrid-event .ev-hide { display: none; }
+  .fc-daygrid-event .ev { padding-right: 4px; }
 }
 
 /* Light mode: darken the modal overlay slightly less */
