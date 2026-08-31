@@ -80,16 +80,18 @@
         <p class="eq-readout" id="eq-readout" aria-live="polite"></p>
       </div>
 
-      <!-- City Filter -->
+      <!-- Cities & Venues.
+           Replaces the former separate "City" chip row and flat "Venues" list: every
+           venue belongs to a city, so the venues now sit under theirs and each city
+           collapses. Rendered together by renderVenueFilters() in js/filters.js.
+           #venue-filters keeps its id because _updateVenueRestoreBtn() appends to it. -->
       <div class="filter-section">
-        <div class="filter-label">City</div>
-        <div class="chip-group" id="city-filters"></div>
-      </div>
-
-      <!-- Venue Filter -->
-      <div class="filter-section">
-        <div class="filter-label">Venues</div>
-        <div class="venue-list" id="venue-filters"></div>
+        <div class="filter-label">Cities &amp; Venues</div>
+        <!-- Cross-cutting chips that aren't a city — currently only Spotify's
+             "★ for you", appended here by js/spotify.js. Collapses to zero height
+             while empty. -->
+        <div class="chip-group quick-filters" id="quick-filters"></div>
+        <div class="city-groups" id="venue-filters"></div>
         <button class="btn-subscribe-venues" onclick="subscribeToVenues()">↗ get a cal for these venues</button>
         <p class="subscribe-hint">new shows will appear automatically!</p>
       </div>

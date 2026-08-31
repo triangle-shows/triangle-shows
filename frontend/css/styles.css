@@ -515,11 +515,71 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   opacity: 0.45;
 }
 
-/* Venue list (rendered by JS as .venue-checkbox labels) */
-.venue-list {
+/* ── Cities & venues ───────────────────────────────────────────────────────────
+   Venues nest under a collapsible city header. Replaces the former flat .venue-list
+   and the separate city chip row. */
+
+.city-groups { display: flex; flex-direction: column; gap: 0.6rem; }
+
+/* Row for non-city chips (Spotify's "★ for you"). Takes no space while empty, so an
+   unconnected visitor sees no gap. */
+.quick-filters:not(:empty) { margin-bottom: 0.6rem; }
+
+.city-group-head { display: flex; align-items: stretch; gap: 0.3rem; }
+/* The chip fills the row so the whole width is a city filter target, and the caret
+   stays a separate, smaller hit area — one row, two distinct actions. */
+.city-group-head .city-chip { flex: 1 1 auto; text-align: left; }
+
+.city-collapse {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 1px;
+  cursor: pointer;
+  /* --muted, not --dim. This is the control the whole feature hangs on, and --dim
+     measures 1.83:1 against --surface in dark mode — under the 3:1 an interactive
+     element needs. --dim is fine for inert decoration, not for this. */
+  color: var(--muted);
+  font-family: 'Space Mono', monospace;
+  font-size: 0.6rem;
+  /* min-height carries the hit target to 24px; padding alone left it at 22. */
+  min-height: 24px;
+  min-width: 34px;
+  padding: 0 0.35rem;
+  transition: color 0.12s, border-color 0.12s;
+}
+.city-collapse:hover { color: var(--accent); border-color: var(--border); }
+.city-collapse:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+.city-count { font-variant-numeric: tabular-nums; opacity: 0.75; }
+.city-caret { display: inline-block; transition: transform 0.15s ease; }
+.city-group.collapsed .city-caret { transform: rotate(-90deg); }
+
+/* Venues indented under their city, with a rule tying them to the group. */
+.city-venues {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  padding: 0.4rem 0 0.1rem 0.55rem;
+  margin-left: 0.2rem;
+  border-left: 1px solid var(--border);
+}
+
+/* Collapse uses display:none deliberately, and the inputs must stay in the DOM.
+   _getFilteredEvents() builds its venue map with
+   querySelectorAll(".venue-checkbox input[type=checkbox]"), so unmounting a collapsed
+   city would silently drop its venues from the filter — the calendar would disagree
+   with a sidebar the visitor cannot see. display:none keeps them queryable while
+   removing them from layout and from the tab order, which is the same thing
+   `.venue-checkbox input { display: none }` already relies on further down. */
+.city-group.collapsed .city-venues { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .city-caret { transition: none; }
 }
 
 .venue-checkbox {
