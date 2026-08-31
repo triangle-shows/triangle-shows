@@ -190,28 +190,29 @@ html[data-mode="light"][data-palette="wisteria"] {
   --eq-fav-hover: #12617f;
 }
 
-/* Pressed background for the favourites-only button.
-   Deliberately NOT --eq-fav, though it is the same colour family and follows the same
-   wisteria swap. --eq-fav is tuned as a *graphic* against the 3:1 floor, because it
-   paints equalizer bars. Here it would sit behind 0.62rem uppercase text, which needs
-   4.5:1 — and the light-mode --eq-fav values measure 3.37 to 4.05, so reusing them
-   failed in all five light palettes. These are the same hues taken darker until the
-   button label clears 4.5:1 everywhere (worst case 4.73, durham/light). */
+/* The "strong" favourite colour: same hue family as --eq-fav, taken darker.
+   Used by the favourites-only button's pressed background and by a hearted heart icon
+   on an event tile. Both need something --eq-fav cannot give them, for the same reason:
+   --eq-fav is tuned as a *graphic* sitting on --bg, because it paints equalizer bars.
+   Against a tile (--surface2) or behind button text it is too light — measured at
+   3.37-4.05 behind the button label (needs 4.5) and 2.64-2.96 as a heart on a light
+   tile (needs 3). These values clear both floors everywhere: worst 4.73 for the button
+   label and 3.70 for the heart, both on durham/light. */
 :root {
-  --fav-btn-bg:       #ff8fa8;
-  --fav-btn-bg-hover: #ffb3c4;
+  --fav-strong:       #ff8fa8;
+  --fav-strong-hover: #ffb3c4;
 }
 html[data-mode="light"] {
-  --fav-btn-bg:       #b83a5c;
-  --fav-btn-bg-hover: #9c2a48;
+  --fav-strong:       #b83a5c;
+  --fav-strong-hover: #9c2a48;
 }
 html[data-palette="wisteria"] {
-  --fav-btn-bg:       #8ad5f0;
-  --fav-btn-bg-hover: #b0e6f8;
+  --fav-strong:       #8ad5f0;
+  --fav-strong-hover: #b0e6f8;
 }
 html[data-mode="light"][data-palette="wisteria"] {
-  --fav-btn-bg:       #12617f;
-  --fav-btn-bg-hover: #0d4d66;
+  --fav-strong:       #12617f;
+  --fav-strong-hover: #0d4d66;
 }
 
 /* Durham Bulls light: warm desaturated brown bg, navy text */
@@ -849,7 +850,7 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   position: relative;
   display: flex;
   flex-direction: column;
-  padding: 2px 32px 2px 4px; /* right padding reserves space for heart + hide */
+  padding: 2px 44px 2px 4px; /* right padding reserves space for heart + hide */
   overflow: hidden;
 }
 /* Event title.
@@ -885,49 +886,57 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   text-overflow: ellipsis;
 }
 
-/* Heart / favorite button — shows on hover, 20% bigger than original */
+/* Heart / favorite button — revealed when the tile is hovered.
+   Colors are palette tokens, not the hardcoded rgba(255,255,255,…) they used to be.
+   That white was correct while tiles were saturated dark fills; once the gutter
+   treatment moved tile text onto --surface2 it became near-invisible in light mode. */
 .ev-heart {
   position: absolute;
   top: 50%;
-  right: 17px;
+  right: 24px;
   transform: translateY(-50%);
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 0.84rem;
+  font-size: 0.95rem;
   line-height: 1;
-  color: rgba(255,255,255,0.5);
-  padding: 1px 2px;
+  color: var(--muted);
+  padding: 2px 3px;
   opacity: 0;
   transition: opacity 0.15s, color 0.12s;
   z-index: 1;
   user-select: none;
 }
 .ev:hover .ev-heart        { opacity: 1; }
-.ev-heart.hearted          { opacity: 1 !important; color: #ff8fa8; }
-.ev-heart:hover            { color: rgba(255,255,255,0.9); }
-.ev-heart.hearted:hover    { color: #ff5580; }
+/* --fav-strong rather than a literal #ff8fa8, and rather than --eq-fav: the token
+   carries the light-mode and wisteria variants, so a hearted show stays visible on warm
+   paper and stops clashing on the pink palette. --eq-fav itself measures only 2.64-2.96
+   against a light tile, because it is tuned to sit on --bg rather than on --surface2. */
+.ev-heart.hearted          { opacity: 1 !important; color: var(--fav-strong); }
+.ev-heart:hover            { color: var(--accent); }
+.ev-heart.hearted:hover    { color: var(--fav-strong-hover); }
 
 /* Hide button — dismiss event until page refresh */
 .ev-hide {
   position: absolute;
   top: 50%;
-  right: 2px;
+  right: 3px;
   transform: translateY(-50%);
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 0.62rem;
+  /* Was 0.62rem — roughly 10px, and the smallest interactive thing on the page. */
+  font-size: 0.78rem;
   line-height: 1;
-  color: rgba(255,255,255,0.4);
-  padding: 1px 2px;
+  color: var(--muted);
+  padding: 2px 3px;
   opacity: 0;
   transition: opacity 0.15s, color 0.12s;
   z-index: 1;
   user-select: none;
 }
 .ev:hover .ev-hide  { opacity: 1; }
-.ev-hide:hover      { color: rgba(255,255,255,0.9); }
+.ev-hide:hover      { color: var(--accent); }
 
 /* Past events — greyed out */
 .fc-event.ev-past { opacity: 0.45; }
@@ -1181,14 +1190,14 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
    button in the heart pink rather than another accent outline, which also stops it
    reading as "hovered". */
 .btn-favorites-only.active {
-  background: var(--fav-btn-bg);
-  border-color: var(--fav-btn-bg);
+  background: var(--fav-strong);
+  border-color: var(--fav-strong);
   color: var(--bg);
   opacity: 1;
 }
 .btn-favorites-only.active:hover {
-  background: var(--fav-btn-bg-hover);
-  border-color: var(--fav-btn-bg-hover);
+  background: var(--fav-strong-hover);
+  border-color: var(--fav-strong-hover);
   color: var(--bg);
 }
 .btn-favorites-only:focus-visible,
@@ -1275,8 +1284,10 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
 
   /* List view: clip overflow on mobile; title fills all available width */
   .fc { overflow: hidden; }
-  /* Reduce ev right padding on mobile */
-  .ev { padding-right: 20px; }
+  /* Mobile reserves less than desktop, but 20px was under the icons' own width even
+     before they grew — and on mobile they are permanently visible rather than
+     hover-revealed, so a title running underneath them is guaranteed, not occasional. */
+  .ev { padding-right: 40px; }
 
   /* Ko-fi: hide from header, show at bottom of sidebar */
   .app-header .kofi-wrap { display: none; }
@@ -1300,8 +1311,8 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   .palette-btn { width: 26px; height: 26px; }
 
   /* Heart + hide: always slightly visible on mobile (no real hover) */
-  .ev-heart { opacity: 0.4; font-size: 0.84rem; }
-  .ev-hide  { opacity: 0.3; }
+  .ev-heart { opacity: 0.75; font-size: 0.95rem; }
+  .ev-hide  { opacity: 0.6;  font-size: 0.78rem; }
   .venue-hide-btn { opacity: 0.3; }
 
   /* Bottom bar: left edge on mobile (sidebar is hidden) */
@@ -1319,9 +1330,10 @@ html[data-mode="light"] .modal-overlay {
 /* Light mode: list view needs dark text (events have no colored bg in list view) */
 html[data-mode="light"] .fc-list-event .ev-title { color: var(--text); }
 html[data-mode="light"] .fc-list-event .ev-venue { color: var(--muted); }
-html[data-mode="light"] .fc-list-event .ev-heart { color: rgba(0,0,0,0.35); }
-html[data-mode="light"] .fc-list-event .ev-hide  { color: rgba(0,0,0,0.25); }
-html[data-mode="light"] .venue-hide-btn          { color: rgba(0,0,0,0.35); }
+/* The .ev-heart / .ev-hide light-mode overrides that were here are gone: they existed
+   only to undo a hardcoded white base, and the base is now --muted, which is already
+   palette- and mode-correct. */
+html[data-mode="light"] .venue-hide-btn          { color: var(--muted); }
 
 /* Light mode needs nothing special for daygrid events now. The block that used to live
    here put them on --surface2 and colored the title with the venue color, to rescue the
@@ -1479,10 +1491,10 @@ html[data-mode="light"] .fc .fc-list-event .ev {
 .fc .fc-daygrid-event:hover {
   background-color: color-mix(in srgb, var(--venue-color, var(--accent)) 14%, var(--surface2)) !important;
 }
-.fc .fc-daygrid-event .ev-heart,
-.fc .fc-daygrid-event .ev-hide {
-  color: var(--dim);
-}
+/* No daygrid-specific colour for the icons any more. This block set them to --dim,
+   which measures 1.83:1 against --surface2 in dark mode -- under the 3:1 an interactive
+   control needs, and the reason they were hard to read on hover. The base .ev-heart /
+   .ev-hide rules now use --muted, which works in both modes. */
 
 /* The list view's own dot is drawn by FullCalendar from the event's border color, which
    is the unbrightened seed value -- same invisibility problem on a dark surface. */
