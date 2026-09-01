@@ -1,0 +1,88 @@
+name: Release notes
+
+# Fires on the promotion PR — the one that carries `main` into `prod` — and posts a
+# one-line-per-PR summary of everything it ships.
+#
+# Why this is automated rather than written by hand: a promotion here is a single PR
+# carrying every commit merged to `main` since the last one, so `git log --oneline` over
+# that range mixes merge commits with the individual commits inside each PR. A summary
+# written from that describes what the author remembers doing. The first derived run
+# surfaced four merged security fixes from a fork that nobody had mentioned.
+on:
+  pull_request:
+    # Only promotions. An ordinary feature PR targets `main` and gets nothing from this.
+    branches: [prod]
+    types: [opened, reopened, synchronize]
+  # Preview what a promotion would carry, before opening the PR. Renders into the run
+  # summary rather than commenting anywhere.
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Branch being deployed to"
+        default: prod
+      head:
+        description: "Branch being promoted"
+        default: main
+
+# Read the repo, write one comment. Nothing here needs more.
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  notes:
+    name: Summarise what is shipping
+    runs-on: ubuntu-latest
+
+    steps:
+      # No actions/checkout of the *code* is needed — every fact comes from the GitHub API,
+      # which sidesteps the fetch-depth trap that would otherwise make `git rev-list` return
+      # nothing on a shallow clone. The checkout is only here for the script itself.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the notes
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          BASE="${{ github.event.inputs.base || github.base_ref }}"
+          HEAD="${{ github.event.inputs.head || github.head_ref }}"
+          echo "Comparing $BASE...$HEAD"
+          python .github/scripts/release_notes.py --base "$BASE" --head "$HEAD" \
+            | tee "$RUNNER_TEMP/notes.md"
+
+      - name: Post or update the comment
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A comment, not the PR body. Overwriting the body would destroy whatever the
+          # author wrote, and this re-runs on every push to the promotion branch.
+          #
+          # The marker makes it idempotent: find our previous comment and edit it, rather
+          # than adding one per run and burying the PR under near-identical summaries.
+          MARKER="<!-- release-notes -->"
+          BODY="$MARKER"$'\n'"$(cat "$RUNNER_TEMP/notes.md")"
+
+          EXISTING=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.number }}/comments" \
+            --jq "[.[] | select(.body | startswith(\"$MARKER\"))] | first | .id // empty")
+
+          if [ -n "$EXISTING" ]; then
+            gh api --method PATCH \
+              "repos/${{ github.repository }}/issues/comments/$EXISTING" \
+              -f body="$BODY" > /dev/null
+            echo "Updated comment $EXISTING"
+          else
+            gh api --method POST \
+              "repos/${{ github.repository }}/issues/${{ github.event.number }}/comments" \
+              -f body="$BODY" > /dev/null
+            echo "Posted a new comment"
+          fi
