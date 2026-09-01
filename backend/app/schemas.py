@@ -52,6 +52,11 @@ class VenueResponse(BaseModel):
     website: Optional[str] = None
     scraper_type: str
     color: str  # Hex color used for calendar event styling per venue
+    # How many events this venue has from today onward, after duplicates are excluded.
+    # Present so the filter sidebar can say how much a venue would actually contribute —
+    # and so a hand-added promoter with nothing coming up can be left out of the list
+    # entirely rather than offered as a filter that selects nothing.
+    upcoming_event_count: int = 0
 
     # Allow constructing directly from a SQLAlchemy Venue ORM instance
     model_config = {"from_attributes": True}

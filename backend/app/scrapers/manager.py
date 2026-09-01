@@ -27,7 +27,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import settings
 from app.classifier import classification_updates, reclassify_floor, ALWAYS_LIVE_VENUE_SLUGS
-from app.models import Venue, Event, ScrapeLog, SeriesOverride
+from app.models import Venue, Event, ScrapeLog, SeriesOverride, MANUAL_SCRAPER_TYPE
 from app.redaction import describe_exception
 from app.scrapers.base import BaseScraper, ScrapedEvent
 from app.scrapers.ticketmaster import TicketmasterScraper
@@ -249,6 +249,44 @@ def plan_upsert(existing: list[Any], scraped_events: list[ScrapedEvent], today: 
     return plan
 
 
+def event_from_scraped(se: ScrapedEvent, venue_id: int) -> Event:
+    """Build a new Event row from a ScrapedEvent.
+
+    Extracted so the admin's manual-add endpoint constructs rows the same way a scrape
+    does, rather than maintaining a parallel field list that drifts. That matters more
+    than it looks: ScrapedEvent.__post_init__ cleans the title and validates the ticket
+    and image URLs, and ScrapedEvent.hash is the dedup key. A hand-added event routed
+    through the same dataclass therefore gets the same normalization, and — because the
+    hash is computed identically — a venue that later lists a show an admin already added
+    matches the admin's row instead of inserting a second one.
+
+    Does not set is_manually_created; the caller does. Nothing in the scraper path should
+    ever write that flag (see scraper_must_not_delete).
+    """
+    return Event(
+        external_id=se.external_id,
+        venue_id=venue_id,
+        name=se.name,
+        artist=se.artist,
+        support_artists=se.support_artists,
+        date=se.date,
+        doors_time=se.doors_time,
+        show_time=se.show_time,
+        ticket_url=se.ticket_url,
+        price_min=se.price_min,
+        price_max=se.price_max,
+        image_url=se.image_url,
+        genre=se.genre,
+        subgenre=se.subgenre,
+        status=se.status,
+        age_restriction=se.age_restriction,
+        description=se.description,
+        source=se.source,
+        source_url=se.source_url,
+        hash=se.hash,
+    )
+
+
 # --- ScrapeManager ---
 
 class ScrapeManager:
@@ -263,7 +301,16 @@ class ScrapeManager:
         self.last_reclassify: Optional[dict] = None
 
     def _get_scraper(self, venue: Venue) -> Optional[BaseScraper]:
-        """Instantiate the correct scraper for a venue."""
+        """Instantiate the correct scraper for a venue, or None if there is none.
+
+        A manual venue (a promoter, a one-off series) has no source to scrape, so None is
+        the correct and expected answer for it — not a misconfiguration. scrape_all filters
+        these out before reaching here; this branch exists so that a manual venue arriving
+        by some other path fails as a clear no-op rather than looking like a broken
+        scraper_type.
+        """
+        if venue.scraper_type == MANUAL_SCRAPER_TYPE:
+            return None
         if venue.scraper_type == "ticketmaster":
             if not venue.ticketmaster_venue_id:
                 logger.warning(f"No TM venue ID for {venue.slug}")
@@ -469,28 +516,7 @@ class ScrapeManager:
             self._apply_scraped(row, se)
 
         for se in plan.inserts:
-            self.session.add(Event(
-                external_id=se.external_id,
-                venue_id=venue_id,
-                name=se.name,
-                artist=se.artist,
-                support_artists=se.support_artists,
-                date=se.date,
-                doors_time=se.doors_time,
-                show_time=se.show_time,
-                ticket_url=se.ticket_url,
-                price_min=se.price_min,
-                price_max=se.price_max,
-                image_url=se.image_url,
-                genre=se.genre,
-                subgenre=se.subgenre,
-                status=se.status,
-                age_restriction=se.age_restriction,
-                description=se.description,
-                source=se.source,
-                source_url=se.source_url,
-                hash=se.hash,
-            ))
+            self.session.add(event_from_scraped(se, venue_id))
 
         await self.session.flush()
         return {
@@ -570,8 +596,19 @@ class ScrapeManager:
     # --- Bulk scrape entry points ---
 
     async def scrape_all(self, scraper_types: Optional[list[str]] = None) -> list[dict]:
-        """Scrape all venues (or those matching given scraper_types)."""
-        query = select(Venue)
+        """Scrape all venues (or those matching given scraper_types).
+
+        Venues whose scraper_type is MANUAL_SCRAPER_TYPE are excluded unconditionally, and
+        this is a guardrail rather than an optimisation. There is no scraper for them by
+        design, so _get_scraper returns None, scrape_venue raises "No scraper available",
+        and every one of them would write a failed ScrapeLog row on every cycle — four
+        times a day, forever, for each promoter an admin adds. The scrape would still look
+        broken in the logs while working perfectly.
+
+        Excluded even when scraper_types names them explicitly: there is nothing to scrape,
+        so an explicit request is a mistake rather than an override.
+        """
+        query = select(Venue).where(Venue.scraper_type != MANUAL_SCRAPER_TYPE)
         if scraper_types:
             query = query.where(Venue.scraper_type.in_(scraper_types))
         result = await self.session.execute(query)

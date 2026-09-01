@@ -165,6 +165,40 @@ ADMIN_HTML = """<!doctype html>
   .crow.hiddenrow .ct { color:#8a8a8e; }
   #dupes .empty { border:1px solid #2a2a2e; border-radius:2px; background:#141417; }
   #err { color:#e0625f; font-size:0.75rem; margin:0 0 0.7rem; min-height:1em; }
+  #ok { color:#7fd69a; font-size:0.75rem; margin:0 0 0.7rem; min-height:1em; }
+  /* --- Manual event entry --- */
+  #add { border:1px solid #2a2a2e; border-radius:2px; background:#141417; padding:1rem; max-width:68ch; }
+  #add h2 { font-size:0.72rem; text-transform:uppercase; letter-spacing:0.08em;
+            color:var(--accent); margin:0 0 0.2rem; }
+  #add .hint { color:#8a8a8e; font-size:0.72rem; line-height:1.5; margin:0 0 0.9rem; }
+  /* Two columns on a roomy screen, one when narrow. A date and a time sitting side by
+     side is the pairing that actually helps; everything else just wants to be scannable. */
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(15rem, 1fr)); gap:0.6rem 0.9rem; }
+  .f { display:flex; flex-direction:column; gap:0.2rem; }
+  .f.wide { grid-column:1 / -1; }
+  .f label { color:#a8a6a3; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.06em; }
+  .f label .req { color:var(--accent); }
+  .f input, .f select, .f textarea {
+     font-family:inherit; font-size:0.8rem; padding:0.35rem 0.5rem; border-radius:2px;
+     background:#17171a; border:1px solid #2a2a2e; color:#e8e6e3; }
+  .f input:focus, .f select:focus, .f textarea:focus { outline:none; border-color:var(--accent); }
+  .f textarea { resize:vertical; min-height:3.4rem; }
+  .f .note { color:#8a8a8e; font-size:0.66rem; }
+  .f.check { flex-direction:row; align-items:center; gap:0.45rem; }
+  .f.check input { width:auto; }
+  .f.check label { text-transform:none; letter-spacing:0; font-size:0.75rem; color:#c8c6c3; }
+  /* The new-promoter fields sit inside the same form, revealed by the venue dropdown,
+     rather than in a separate dialog — creating the promoter and creating its first event
+     is one intention, and a modal would make it two. */
+  #newVenue { grid-column:1 / -1; border-left:2px solid var(--accent); padding-left:0.8rem;
+              margin:0.2rem 0; display:grid; grid-template-columns:repeat(auto-fit, minmax(13rem, 1fr));
+              gap:0.6rem 0.9rem; }
+  #add .actions { margin-top:1rem; display:flex; gap:0.6rem; align-items:center; }
+  #add button.go { font-family:inherit; font-size:0.75rem; text-transform:uppercase;
+     letter-spacing:0.06em; padding:0.4rem 0.9rem; border:1px solid var(--accent);
+     background:var(--accent); color:#0e0e10; font-weight:700; cursor:pointer; border-radius:2px; }
+  #add button.go:hover { filter:brightness(1.1); }
+  #add button.go:disabled { opacity:0.5; cursor:default; filter:none; }
 </style>
 </head><body>
   <header>
@@ -178,6 +212,7 @@ ADMIN_HTML = """<!doctype html>
     <div class="controls">
       <button class="fbtn on" data-v="queue" onclick="setView('queue')">review queue</button>
       <button class="fbtn" data-v="duplicates" onclick="setView('duplicates')">duplicates</button>
+      <button class="fbtn" data-v="add" onclick="setView('add')">add event</button>
     </div>
     <div class="controls" id="queueControls">
       <button class="fbtn on" data-f="non_live" onclick="setFilter('non_live')">non-live</button>
@@ -194,6 +229,7 @@ ADMIN_HTML = """<!doctype html>
       <span id="dupeCount"></span>
     </div>
     <p id="err"></p>
+    <p id="ok"></p>
     <pre id="rules" class="hidden"></pre>
     <div id="help" class="hidden">
       <h2>What this page is for</h2>
@@ -269,6 +305,107 @@ ADMIN_HTML = """<!doctype html>
       <tbody id="tbody"></tbody>
     </table>
     <div id="dupes" class="hidden"></div>
+    <div id="add" class="hidden">
+      <h2>Add an event by hand</h2>
+      <p class="hint">For anything no scraper will find — a promoter's show, a festival
+      stage, a one-off at a room that doesn't publish listings. It appears on the public
+      calendar immediately, and the scraper won't remove it.</p>
+      <form id="addForm" onsubmit="submitEvent(event)">
+        <div class="grid">
+          <div class="f wide">
+            <label for="fVenue">venue <span class="req">*</span></label>
+            <select id="fVenue" onchange="venueChanged()" required></select>
+            <span class="note" id="fVenueNote"></span>
+          </div>
+
+          <div id="newVenue" class="hidden">
+            <div class="f">
+              <label for="nvName">promoter / venue name <span class="req">*</span></label>
+              <input id="nvName" type="text" placeholder="e.g. Sharp 9 Gallery">
+            </div>
+            <div class="f">
+              <label for="nvCity">city <span class="req">*</span></label>
+              <input id="nvCity" type="text" list="cityList" placeholder="Durham">
+              <datalist id="cityList"></datalist>
+              <span class="note">the public site groups and filters by this</span>
+            </div>
+            <div class="f">
+              <label for="nvSize">size</label>
+              <select id="nvSize">
+                <option value="small">small</option>
+                <option value="medium">medium</option>
+                <option value="large">large</option>
+              </select>
+            </div>
+            <div class="f">
+              <label for="nvColor">colour</label>
+              <input id="nvColor" type="text" placeholder="chosen for you">
+              <span class="note">leave blank to get one no other venue is using</span>
+            </div>
+          </div>
+
+          <div class="f wide">
+            <label for="fName">event name <span class="req">*</span></label>
+            <input id="fName" type="text" required placeholder="e.g. Sub Rosa">
+          </div>
+          <div class="f">
+            <label for="fArtist">artist</label>
+            <input id="fArtist" type="text">
+            <span class="note">shown instead of the event name when set</span>
+          </div>
+          <div class="f">
+            <label for="fSupport">support</label>
+            <input id="fSupport" type="text">
+          </div>
+          <div class="f">
+            <label for="fDate">date <span class="req">*</span></label>
+            <input id="fDate" type="date" required>
+          </div>
+          <div class="f">
+            <label for="fShow">show time</label>
+            <input id="fShow" type="time">
+          </div>
+          <div class="f">
+            <label for="fDoors">doors</label>
+            <input id="fDoors" type="time">
+          </div>
+          <div class="f">
+            <label for="fAge">ages</label>
+            <input id="fAge" type="text" placeholder="e.g. 18+">
+          </div>
+          <div class="f">
+            <label for="fPriceMin">price from</label>
+            <input id="fPriceMin" type="number" min="0" step="1" placeholder="0 for free">
+          </div>
+          <div class="f">
+            <label for="fPriceMax">price to</label>
+            <input id="fPriceMax" type="number" min="0" step="1">
+          </div>
+          <div class="f">
+            <label for="fGenre">genre</label>
+            <input id="fGenre" type="text">
+          </div>
+          <div class="f wide">
+            <label for="fUrl">ticket link</label>
+            <input id="fUrl" type="url" placeholder="https://...">
+            <span class="note">dropped if it isn't a working http(s) link</span>
+          </div>
+          <div class="f wide">
+            <label for="fDesc">description</label>
+            <textarea id="fDesc"></textarea>
+          </div>
+          <div class="f check wide">
+            <input id="fLive" type="checkbox" checked>
+            <label for="fLive">live music — untick for comedy, trivia, a DJ night, a
+            club night. Visitors can hide non-live events, and this setting is yours: the
+            detector will never overwrite it.</label>
+          </div>
+        </div>
+        <div class="actions">
+          <button type="submit" class="go" id="fSubmit">add event</button>
+        </div>
+      </form>
+    </div>
   </main>
 <script>
   let RULES = null;
@@ -617,14 +754,132 @@ ADMIN_HTML = """<!doctype html>
     await foldAction(() => api('/admin/api/events/' + id + '/unfold', { method: 'POST' }));
   }
 
+  // --- Manual event entry ---
+
+  const NEW_VENUE = '__new__';
+
+  function venueChanged() {
+    const isNew = $('#fVenue').value === NEW_VENUE;
+    $('#newVenue').classList.toggle('hidden', !isNew);
+    // required is toggled rather than fixed in the markup: a hidden required field blocks
+    // submit with a browser message pointing at something the admin cannot see.
+    ['#nvName', '#nvCity'].forEach((id) => { $(id).required = isNew; });
+
+    const opt = $('#fVenue').selectedOptions[0];
+    const n = opt && opt.dataset.count ? Number(opt.dataset.count) : null;
+    $('#fVenueNote').textContent = isNew || n === null ? ''
+      : (n === 0 ? 'nothing else coming up at this venue'
+                 : n + ' other event' + (n === 1 ? '' : 's') + ' coming up here');
+  }
+
+  async function loadVenues(selectId) {
+    const data = await api('/admin/api/venues');
+    const opt = (v) =>
+      '<option value="' + v.id + '" data-count="' + v.upcoming_event_count + '">' +
+      esc(v.name) + ' · ' + esc(v.city) + '</option>';
+    // Scraped and hand-added are separated because they answer different questions —
+    // "a real room hosting something its listings won't carry" versus "there is no venue".
+    // One alphabetical list buries the second kind as soon as there are a few.
+    let html = '<option value="" disabled' + (selectId ? '' : ' selected') + '>choose…</option>';
+    if (data.manual.length) {
+      html += '<optgroup label="promoters and one-offs">' + data.manual.map(opt).join('') + '</optgroup>';
+    }
+    html += '<optgroup label="scraped venues">' + data.scraped.map(opt).join('') + '</optgroup>';
+    html += '<option value="' + NEW_VENUE + '">＋ new promoter or venue…</option>';
+    $('#fVenue').innerHTML = html;
+    if (selectId) $('#fVenue').value = String(selectId);
+
+    // Offer the cities already in use, so a new promoter lands in an existing group
+    // instead of creating "durham" alongside "Durham" and splitting the sidebar.
+    const cities = [...new Set(data.scraped.concat(data.manual).map((v) => v.city))].sort();
+    $('#cityList').innerHTML = cities.map((c) => '<option value="' + esc(c) + '"></option>').join('');
+    venueChanged();
+  }
+
+  function fieldValue(id) {
+    const el = $(id);
+    const v = (el.value || '').trim();
+    return v === '' ? null : v;
+  }
+
+  async function submitEvent(ev) {
+    ev.preventDefault();
+    $('#err').textContent = '';
+    $('#ok').textContent = '';
+    const btn = $('#fSubmit');
+    btn.disabled = true;
+    try {
+      let venueId = $('#fVenue').value;
+
+      // Creating the promoter first, in its own request. Two writes rather than one
+      // endpoint that does both: if the event is rejected — a clashing hash, a mistyped
+      // year — the promoter still exists and is selected, so the admin fixes one field
+      // and resubmits instead of retyping the venue as well.
+      if (venueId === NEW_VENUE) {
+        const created = await api('/admin/api/venues', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: fieldValue('#nvName'),
+            city: fieldValue('#nvCity'),
+            size_category: $('#nvSize').value,
+            color: fieldValue('#nvColor'),
+          }),
+        });
+        venueId = created.id;
+        await loadVenues(venueId);
+        $('#ok').textContent = 'Created ' + created.name + ' (' + created.color + ').';
+      }
+
+      const num = (id) => {
+        const v = fieldValue(id);
+        return v === null ? null : Number(v);
+      };
+      const created = await api('/admin/api/events', {
+        method: 'POST',
+        body: JSON.stringify({
+          venue_id: Number(venueId),
+          name: fieldValue('#fName'),
+          date: fieldValue('#fDate'),
+          artist: fieldValue('#fArtist'),
+          support_artists: fieldValue('#fSupport'),
+          doors_time: fieldValue('#fDoors'),
+          show_time: fieldValue('#fShow'),
+          ticket_url: fieldValue('#fUrl'),
+          price_min: num('#fPriceMin'),
+          price_max: num('#fPriceMax'),
+          description: fieldValue('#fDesc'),
+          genre: fieldValue('#fGenre'),
+          age_restriction: fieldValue('#fAge'),
+          is_live_music: $('#fLive').checked,
+        }),
+      });
+      // Keep the venue and date, clear the rest. Adding several shows for one promoter on
+      // one night, or a run of dates, is the common case; retyping the venue each time is
+      // the friction that makes an admin batch them up and put it off.
+      ['#fName', '#fArtist', '#fSupport', '#fDoors', '#fShow', '#fUrl',
+       '#fPriceMin', '#fPriceMax', '#fDesc', '#fGenre', '#fAge'].forEach((id) => { $(id).value = ''; });
+      $('#fLive').checked = true;
+      $('#ok').textContent = 'Added "' + created.name + '" at ' + created.venue_name +
+                             ' on ' + created.date + '. Venue and date kept for the next one.';
+      await loadVenues(venueId);
+      $('#fName').focus();
+    } catch (e) {
+      showError(e);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   function setView(v) {
     state.view = v;
     document.querySelectorAll('.fbtn[data-v]').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
-    const isQueue = v === 'queue';
-    $('#queueControls').classList.toggle('hidden', !isQueue);
-    $('#queueTable').classList.toggle('hidden', !isQueue);
-    $('#dupeControls').classList.toggle('hidden', isQueue);
-    $('#dupes').classList.toggle('hidden', isQueue);
+    $('#queueControls').classList.toggle('hidden', v !== 'queue');
+    $('#queueTable').classList.toggle('hidden', v !== 'queue');
+    $('#dupeControls').classList.toggle('hidden', v !== 'duplicates');
+    $('#dupes').classList.toggle('hidden', v !== 'duplicates');
+    $('#add').classList.toggle('hidden', v !== 'add');
+    $('#err').textContent = '';
+    $('#ok').textContent = '';
     reload();
   }
 
@@ -641,7 +896,11 @@ ADMIN_HTML = """<!doctype html>
   // which never gets here.
   async function reload() {
     try {
-      if (state.view === 'duplicates') await loadDuplicates(); else await load();
+      if (state.view === 'duplicates') await loadDuplicates();
+      // The add form is loaded, not reloaded: refetching venues on every action would
+      // reset the dropdown mid-typing. loadVenues() is called explicitly after a write.
+      else if (state.view === 'add') await loadVenues($('#fVenue').value || null);
+      else await load();
     } catch (e) {
       showError(e);
     }
