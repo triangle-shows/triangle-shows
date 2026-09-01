@@ -240,3 +240,55 @@ class TestEmptyManualVenuesAreHidden:
         hid — would make the sidebar promise events that are not there."""
         assert "duplicate_of_id" in source
         assert "date.today()" in source
+
+
+class TestHiddenClassActuallyHides:
+    """`.hidden { display:none }` is a single class, so any id rule that also sets
+    `display` outranks it and the element never hides.
+
+    This shipped broken once: `#newVenue { display:grid }` (specificity 1-0-0) beat
+    `.hidden` (0-1-0), so the new-promoter fields were permanently visible however the
+    class was toggled. Nothing failed and no error appeared — the panel was simply always
+    open, which reads as a layout choice rather than a bug.
+
+    Structural rather than behavioural because the admin page is a string of CSS and JS
+    with no stylesheet for a test to query, and this failure mode is invisible in the DOM:
+    the class *is* applied, it just does not win.
+    """
+
+    @pytest.fixture(scope="class")
+    def parts(self):
+        import re
+
+        from app.admin_ui import ADMIN_HTML
+
+        css = re.search(r"<style>(.*?)</style>", ADMIN_HTML, re.S).group(1)
+        js = re.search(r"<script>(.*?)</script>", ADMIN_HTML, re.S).group(1)
+        return ADMIN_HTML, css, js
+
+    def test_every_toggled_id_can_actually_be_hidden(self, parts):
+        import re
+
+        html, css, js = parts
+        toggled = set(re.findall(r"\$\('#(\w+)'\)\.classList\.toggle\('hidden'", js))
+        toggled |= set(re.findall(r'id="(\w+)"[^>]*class="[^"]*hidden', html))
+        assert toggled, "found nothing toggled with .hidden — has the mechanism changed?"
+
+        broken = []
+        for element_id in sorted(toggled):
+            # The element's *own* rule: '#id' followed only by whitespace then '{'. A
+            # descendant rule like '#add .actions { display:flex }' styles the child and is
+            # irrelevant here, which is why this is not a substring search.
+            own = re.findall(r"#" + element_id + r"\s*\{([^}]*)\}", css)
+            if not any(re.search(r"\bdisplay\s*:", rule) for rule in own):
+                continue  # display unset, so .hidden wins on its own
+            if re.search(
+                r"#" + element_id + r"\.hidden\s*\{[^}]*display\s*:\s*none", css
+            ):
+                continue  # specificity matched deliberately
+            broken.append(element_id)
+
+        assert not broken, (
+            "these ids set `display` in an id rule and are toggled with .hidden, so the "
+            f"class cannot hide them: {broken}. Add `#<id>.hidden {{ display:none; }}`."
+        )

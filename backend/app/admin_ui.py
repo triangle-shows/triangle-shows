@@ -193,6 +193,12 @@ ADMIN_HTML = """<!doctype html>
   #newVenue { grid-column:1 / -1; border-left:2px solid var(--accent); padding-left:0.8rem;
               margin:0.2rem 0; display:grid; grid-template-columns:repeat(auto-fit, minmax(13rem, 1fr));
               gap:0.6rem 0.9rem; }
+  /* Required because the rule above sets `display` from an id selector. `.hidden` is a
+     single class (specificity 0-1-0) and loses to `#newVenue` (1-0-0), so toggling the
+     class did nothing and the new-promoter fields were permanently visible. This is the
+     only id rule in the file that sets display; every other .hidden target leaves it
+     unset, which is why the pattern works everywhere else. */
+  #newVenue.hidden { display:none; }
   #add .actions { margin-top:1rem; display:flex; gap:0.6rem; align-items:center; }
   #add button.go { font-family:inherit; font-size:0.75rem; text-transform:uppercase;
      letter-spacing:0.06em; padding:0.4rem 0.9rem; border:1px solid var(--accent);
