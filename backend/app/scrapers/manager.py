@@ -28,7 +28,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.config import settings
 from app.classifier import classification_updates, reclassify_floor, ALWAYS_LIVE_VENUE_SLUGS
 from app.models import Venue, Event, ScrapeLog, SeriesOverride
-from app.redaction import redact_credentials
+from app.redaction import describe_exception
 from app.scrapers.base import BaseScraper, ScrapedEvent
 from app.scrapers.ticketmaster import TicketmasterScraper
 
@@ -300,9 +300,19 @@ class ScrapeManager:
             # Ticketmaster scraper authenticates with an ?apikey= query parameter — so the
             # raw exception text is a live credential. It reaches three sinks from here:
             # this log line, the scrape_logs row below, and the dict returned to
-            # POST /api/scrape. Redact once, at the top.
-            message = redact_credentials(str(e))
-            logger.error(f"[{venue_slug}] Scrape failed: {message}")
+            # POST /api/scrape. describe_exception redacts once, at the top.
+            #
+            # It also names the exception class, which is the whole of what those three
+            # sinks reported for a timeout: every httpx transport error has an empty
+            # str(), so `error` came back as "" exactly when a venue was unreachable
+            # (issue #15). "ReadTimeout" is not a diagnosis, but it separates "the venue
+            # is down" from "our parser broke", which is the first question asked.
+            message = describe_exception(e)
+            # exc_info because the class name is not enough for the parser-broke case:
+            # `AttributeError` needs the frame that raised it. Safe to attach here —
+            # RedactingFormatter is a formatter rather than a filter specifically so
+            # that rendered tracebacks are scrubbed too (see app/redaction.py).
+            logger.error(f"[{venue_slug}] Scrape failed: {message}", exc_info=True)
             try:
                 # Roll back the failed transaction before writing the error log,
                 # otherwise the commit below will also fail.
@@ -315,7 +325,8 @@ class ScrapeManager:
                 await self.session.commit()
             except Exception as log_err:
                 logger.warning(
-                    f"[{venue_slug}] Could not write error log: {redact_credentials(str(log_err))}"
+                    f"[{venue_slug}] Could not write error log: {describe_exception(log_err)}",
+                    exc_info=True,
                 )
             return {"venue": venue_slug, "status": "failed", "error": message}
 

@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import async_session
-from app.redaction import redact_credentials, redact_handler
+from app.redaction import describe_exception, redact_handler
 from app.seed import seed_venues
 from app.scheduler import scheduler, configure_scheduler
 from app.api import events, venues, health, feeds, admin
@@ -339,8 +339,10 @@ async def trigger_scrape(
         # unset, and failures here happen *outside* scrape_venue (session construction,
         # a scraper import, the reclassify pass) — before the manager's own redaction
         # runs — so this catch-all has to scrub independently rather than rely on the
-        # per-venue result dict having been scrubbed already.
-        raise HTTPException(status_code=500, detail=redact_credentials(str(e)))
+        # per-venue result dict having been scrubbed already. Naming the class matters
+        # more here than per-venue: these failures have no ScrapeLog row and no venue
+        # context, so a `detail` of "" left the caller with a bare 500 and nothing else.
+        raise HTTPException(status_code=500, detail=describe_exception(e))
 
 
 # --- Static file serving ---
