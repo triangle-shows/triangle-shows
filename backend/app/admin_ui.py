@@ -132,6 +132,39 @@ ADMIN_HTML = """<!doctype html>
   #rules { white-space:pre-wrap; background:#17171a; border:1px solid #2a2a2e; padding:0.8rem;
            border-radius:2px; font-size:0.72rem; margin-top:1rem; color:#b8b6b3; }
   .hidden { display:none; }
+  /* --- Duplicate review (#63) --- */
+  /* text-transform:none, unlike every other badge. This is the only badge whose text
+     contains user data — the surviving listing's name — and act names are often
+     deliberately cased ("MF DOOM", "girl in red", "SOPHIE"). Uppercasing them throws that
+     away and reads as shouting. The badge keeps its pill and colour, so the inconsistency
+     is a casing difference in exchange for not mangling a band's name. */
+  .b.dupe { background:#3d2033; color:#e08ac8; text-transform:none; }
+  /* One card per candidate cluster. A card rather than more table rows because the unit
+     of decision is the cluster, not the row: the admin picks a winner from a small set,
+     and a bordered group makes the boundary of that choice unambiguous. */
+  .cluster { border:1px solid #2a2a2e; border-radius:2px; margin-bottom:0.7rem; background:#141417; }
+  .cluster > .chead { display:flex; align-items:baseline; gap:0.6rem; flex-wrap:wrap;
+           padding:0.5rem 0.7rem; border-bottom:1px solid #1e1e22; }
+  .cluster > .chead .cv { color:#e8e6e3; font-weight:700; }
+  .cluster > .chead .cd { color:#a8a6a3; }
+  .cluster > .chead .sp { flex:1; }
+  .score { color:#8a8a8e; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.06em; }
+  .crow { display:flex; align-items:baseline; gap:0.6rem; flex-wrap:wrap; padding:0.45rem 0.7rem;
+          border-bottom:1px solid #1a1a1e; }
+  .crow:last-child { border-bottom:none; }
+  .crow .ct { flex:1; min-width:12rem; color:#e8e6e3; }
+  .crow .cm { color:#8a8a8e; font-size:0.72rem; }
+  .crow button { font-family:inherit; font-size:0.68rem; padding:0.22rem 0.5rem;
+          border:1px solid #3a3a3e; background:transparent; color:#c8c6c3; cursor:pointer; border-radius:2px; }
+  .crow button.keep { border-color:#2f5c40; color:#7fd69a; }
+  .crow button.keep:hover { background:#1f3d2a; }
+  .crow button:hover { border-color:var(--accent); color:var(--accent); }
+  /* A hidden row is indented under the cluster and dimmed, so "hidden from the public
+     calendar" reads visually rather than needing the badge to be parsed. */
+  .crow.hiddenrow { padding-left:1.7rem; border-left:2px solid #3d2033; background:#121215; }
+  .crow.hiddenrow .ct { color:#8a8a8e; }
+  #dupes .empty { border:1px solid #2a2a2e; border-radius:2px; background:#141417; }
+  #err { color:#e0625f; font-size:0.75rem; margin:0 0 0.7rem; min-height:1em; }
 </style>
 </head><body>
   <header>
@@ -143,6 +176,10 @@ ADMIN_HTML = """<!doctype html>
   </header>
   <main>
     <div class="controls">
+      <button class="fbtn on" data-v="queue" onclick="setView('queue')">review queue</button>
+      <button class="fbtn" data-v="duplicates" onclick="setView('duplicates')">duplicates</button>
+    </div>
+    <div class="controls" id="queueControls">
       <button class="fbtn on" data-f="non_live" onclick="setFilter('non_live')">non-live</button>
       <button class="fbtn" data-f="live" onclick="setFilter('live')">live</button>
       <button class="fbtn" data-f="all" onclick="setFilter('all')">all</button>
@@ -152,6 +189,11 @@ ADMIN_HTML = """<!doctype html>
       <input id="search" placeholder="search name / artist...">
       <span id="count"></span>
     </div>
+    <div class="controls hidden" id="dupeControls">
+      <button class="fbtn tog on" id="dupeFutureBtn" aria-pressed="true" onclick="toggleDupeFuture()">future dates only</button>
+      <span id="dupeCount"></span>
+    </div>
+    <p id="err"></p>
     <pre id="rules" class="hidden"></pre>
     <div id="help" class="hidden">
       <h2>What this page is for</h2>
@@ -197,21 +239,60 @@ ADMIN_HTML = """<!doctype html>
       <p><b>detection rules</b> lists the automatic criteria: keyword matches, and how many
       repeats at one venue count as a recurring series. Anything auto-flagged shows its
       reason next to the badge.</p>
+
+      <h2>Duplicates</h2>
+      <p>The <b>duplicates</b> tab lists every case of one venue having two or more listings
+      on one night. That's the only thing it checks — no title matching decides anything,
+      because rules that compared titles got this wrong twice, in opposite directions.
+      Similarity is used <i>only</i> to sort the list, so the likely duplicates are at the
+      top and being wrong about the order costs nothing.</p>
+      <p><b>Two different shows on one night is normal</b> — an early and a late set, a
+      support show in the back room. Those will appear here and you should leave them. The
+      list isn't a to-do list you can empty; it's the set of nights worth a glance.</p>
+      <p><b>keep this one</b> is pressed on the listing you want to survive; every other
+      listing on that night is then hidden as a duplicate of it. You press the row you're
+      keeping, not the ones you're hiding, so there's no way to get the direction
+      backwards.</p>
+      <p>This <b>hides, it doesn't delete</b>. The hidden row stays in the database,
+      recorded as a duplicate of the one you kept. It disappears from the public calendar
+      and the subscription feed, but stays visible to you — here, and in the review queue
+      with a pink <b>duplicate of "…"</b> badge naming the listing that won. <b>not a
+      duplicate</b> brings it straight back.</p>
+      <p>Nothing else can strand it, either. If you later delete the listing you kept, the
+      hidden ones reappear on the calendar by themselves rather than staying hidden behind
+      a row that no longer exists. And the scraper won't undo your decision: a row you've
+      hidden is protected from the pass that deletes listings a venue has stopped
+      advertising.</p>
     </div>
-    <table>
+    <table id="queueTable">
       <thead><tr><th>date</th><th>event</th><th>status</th><th>actions</th></tr></thead>
       <tbody id="tbody"></tbody>
     </table>
+    <div id="dupes" class="hidden"></div>
   </main>
 <script>
   let RULES = null;
   const $ = (s) => document.querySelector(s);
-  const state = { filter: 'non_live', search: '', futureOnly: false, showApproved: false };
+  // dupeFutureOnly defaults true, matching the endpoint: a duplicate is a problem with a
+  // specific upcoming night, and past ones are archive debris nobody needs prompting about.
+  const state = {
+    view: 'queue', filter: 'non_live', search: '', futureOnly: false, showApproved: false,
+    dupeFutureOnly: true,
+  };
 
   async function api(path, opts) {
     const r = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
     if (r.status === 401) { location.href = '/admin/login'; throw new Error('unauth'); }
-    if (!r.ok) throw new Error('http ' + r.status);
+    if (!r.ok) {
+      // Carry the server's `detail` through. The fold endpoints refuse a chain or a
+      // self-reference with a sentence explaining which row to use instead, and throwing
+      // a bare 'http 400' would discard exactly the part the admin needs to act on.
+      let detail = null;
+      try { detail = (await r.json()).detail; } catch (_) {}
+      const err = new Error(detail || ('http ' + r.status));
+      err.detail = detail;
+      throw err;
+    }
     return r.status === 204 ? null : r.json();
   }
 
@@ -220,9 +301,27 @@ ADMIN_HTML = """<!doctype html>
   }
 
   function badge(ev) {
+    // The duplicate badge leads. A hidden row is out of the public calendar whatever its
+    // live-music verdict says, so showing the verdict first would describe a row by a flag
+    // that currently has no effect.
+    //
+    // Named, not numbered: "duplicate of Sub Rosa" is something an admin can recognise;
+    // "duplicate of 41" is not. The name can be missing if the survivor was deleted
+    // between the two queries, so fall back rather than printing "undefined".
+    let dupe = '';
+    if (ev.duplicate_of_id) {
+      const of = ev.duplicate_of_name
+        ? 'duplicate of "' + esc(ev.duplicate_of_name) + '"'
+        : 'hidden as a duplicate';
+      dupe = '<span class="b dupe">' + of + '</span> ';
+    } else if (ev.hidden_duplicate_count) {
+      const n = ev.hidden_duplicate_count;
+      dupe = '<span class="b dupe">' + n + ' hidden duplicate' + (n === 1 ? '' : 's') +
+             '</span> ';
+    }
     if (ev.is_manual_override)
-      return '<span class="b manual">manual: ' + (ev.is_live_music ? 'live' : 'non-live') + '</span>';
-    return '<span class="b ' + (ev.is_live_music ? 'live' : 'nonlive') + '">' +
+      return dupe + '<span class="b manual">manual: ' + (ev.is_live_music ? 'live' : 'non-live') + '</span>';
+    return dupe + '<span class="b ' + (ev.is_live_music ? 'live' : 'nonlive') + '">' +
            (ev.is_live_music ? 'live' : 'non-live') + '</span> ' +
            '<span class="reason">' + esc(ev.classification_reason || '') + '</span>';
   }
@@ -237,6 +336,17 @@ ADMIN_HTML = """<!doctype html>
   }
 
   function actions(ev) {
+    // A hidden row gets one action and no others. Its classification is moot while it is
+    // hidden, and offering "mark live" on a row nobody can see invites the admin to spend
+    // a decision on something with no effect.
+    //
+    // "not a duplicate" says what clicking it asserts. "unfold" only meant anything to a
+    // reader who already knew the folding metaphor — and that metaphor was wrong anyway:
+    // it implies the two rows were combined, when nothing is combined and the row is only
+    // hidden with a pointer to the survivor.
+    if (ev.duplicate_of_id) {
+      return '<button onclick="unfold(' + ev.id + ')">not a duplicate</button>';
+    }
     let a = approveAction(ev, false, 1) + ' ';
     if (ev.is_manual_override) {
       a += '<button onclick="clearOv(' + ev.id + ')">clear override</button>';
@@ -402,6 +512,141 @@ ADMIN_HTML = """<!doctype html>
     render(data.events, data.count, data.total, data.approved_hidden);
   }
 
+  // --- Duplicate review (#63) ---
+
+  function timeLabel(ev) {
+    // Time is the field that actually distinguishes an early show from a late one, so it
+    // is the most useful thing to put next to two near-identical titles.
+    const t = ev.show_time || ev.doors_time;
+    if (!t) return '<span class="cm">no time listed</span>';
+    const kind = ev.show_time ? 'show' : 'doors';
+    return '<span class="cm">' + kind + ' ' + esc(t.slice(0, 5)) + '</span>';
+  }
+
+  function clusterRow(ev, survivors) {
+    if (ev.duplicate_of_id) {
+      const of = ev.duplicate_of_name
+        ? 'duplicate of "' + esc(ev.duplicate_of_name) + '"'
+        : 'hidden as a duplicate';
+      return '<div class="crow hiddenrow">' +
+        '<span class="ct">' + esc(ev.name) + '</span>' + timeLabel(ev) +
+        '<span class="b dupe">' + of + '</span>' +
+        '<button onclick="unfold(' + ev.id + ')">not a duplicate</button></div>';
+    }
+    // "keep this one" acts on the row the admin wants to survive, and hides every other
+    // visible row in the cluster as a duplicate of it. Acting on the winner rather than
+    // the loser is
+    // deliberate: a "mark as duplicate" button sits on the row that loses and forces the
+    // admin to reason about the other row while clicking this one, which is how the wrong
+    // row gets hidden.
+    const others = survivors.filter((s) => s !== ev.id);
+    const n = others.length;
+    const label = n === 1 ? 'keep this one' : 'keep this one (hides ' + n + ')';
+    return '<div class="crow">' +
+      '<span class="ct">' + esc(ev.name) + '</span>' + timeLabel(ev) +
+      (ev.is_manually_created ? '<span class="b manual">hand-added</span>' : '') +
+      (ev.is_approved ? '<span class="b live">approved</span>' : '') +
+      '<button class="keep" onclick="absorb(' + ev.id + ',[' + others.join(',') + '])">' +
+        label + '</button></div>';
+  }
+
+  function renderDuplicates(data) {
+    const shown = data.count, total = data.total;
+    $('#dupeCount').innerHTML = total
+      ? (shown < total ? '<span class="warn">' + shown + ' of ' + total + ' shown</span>'
+                       : shown + ' cluster(s)')
+      : '';
+    if (!data.clusters.length) {
+      $('#dupes').innerHTML = '<div class="empty">no venue has two listings on one night' +
+        (state.dupeFutureOnly ? ' from today onward' : '') + '</div>';
+      return;
+    }
+    let html = '';
+    data.clusters.forEach((c) => {
+      const survivors = c.events.filter((e) => !e.duplicate_of_id).map((e) => e.id);
+      html += '<div class="cluster">' +
+        '<div class="chead"><span class="cv">' + esc(c.venue_name || 'unknown venue') + '</span>' +
+        '<span class="cd">' + c.date + '</span><span class="sp"></span>' +
+        // Surfaced so the ordering is legible: a queue whose top score is low means
+        // nothing likely is left, rather than looking like the sort is broken.
+        '<span class="score">similarity ' + c.score.toFixed(2) + '</span></div>';
+      c.events.forEach((ev) => { html += clusterRow(ev, survivors); });
+      html += '</div>';
+    });
+    $('#dupes').innerHTML = html;
+  }
+
+  async function loadDuplicates() {
+    const q = new URLSearchParams({ future_only: state.dupeFutureOnly ? 'true' : 'false' });
+    renderDuplicates(await api('/admin/api/duplicates?' + q.toString()));
+  }
+
+  function showError(e) {
+    $('#err').textContent = (e && (e.detail || e.message)) || 'something went wrong';
+  }
+
+  // Every fold action goes through here. The catch has to live in the *action*, not in
+  // reload(): api() throws, so an uncaught rejection escapes the click handler entirely
+  // and reload() is never reached — the admin sees an unchanged page and no message,
+  // which is the silent failure the error line exists to prevent. The fold endpoints
+  // refuse a chain with a sentence naming the row to use instead, and that sentence is
+  // the whole value of surfacing it.
+  async function foldAction(fn) {
+    $('#err').textContent = '';
+    try {
+      await fn();
+    } catch (e) {
+      showError(e);
+      return;
+    }
+    reload();
+  }
+
+  async function absorb(survivorId, duplicateIds) {
+    // Folding hides rows rather than deleting them, and every fold is undoable from the
+    // row it creates — so this asks once, plainly, rather than with a scary warning.
+    const n = duplicateIds.length;
+    if (!confirm('Hide ' + n + ' other listing' + (n === 1 ? '' : 's') +
+                 ' on this night, keeping the one you chose?\\n\\n' +
+                 'They stay in the database, and you can restore any of them here at any time.')) return;
+    await foldAction(() => api('/admin/api/events/' + survivorId + '/absorb',
+              { method: 'POST', body: JSON.stringify({ duplicate_ids: duplicateIds }) }));
+  }
+
+  async function unfold(id) {
+    await foldAction(() => api('/admin/api/events/' + id + '/unfold', { method: 'POST' }));
+  }
+
+  function setView(v) {
+    state.view = v;
+    document.querySelectorAll('.fbtn[data-v]').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+    const isQueue = v === 'queue';
+    $('#queueControls').classList.toggle('hidden', !isQueue);
+    $('#queueTable').classList.toggle('hidden', !isQueue);
+    $('#dupeControls').classList.toggle('hidden', isQueue);
+    $('#dupes').classList.toggle('hidden', isQueue);
+    reload();
+  }
+
+  function toggleDupeFuture() {
+    state.dupeFutureOnly = !state.dupeFutureOnly;
+    $('#dupeFutureBtn').classList.toggle('on', state.dupeFutureOnly);
+    $('#dupeFutureBtn').setAttribute('aria-pressed', state.dupeFutureOnly ? 'true' : 'false');
+    loadDuplicates();
+  }
+
+  // Single entry point so an action can refresh whichever view is open without each
+  // handler having to know which one that is. absorb/unfold are reachable from both.
+  // Its own catch covers a failure to *load*; a failed action is caught in foldAction,
+  // which never gets here.
+  async function reload() {
+    try {
+      if (state.view === 'duplicates') await loadDuplicates(); else await load();
+    } catch (e) {
+      showError(e);
+    }
+  }
+
   async function ov(id, isLive) {
     await api('/admin/api/events/' + id + '/override', { method: 'POST', body: JSON.stringify({ is_live_music: isLive }) });
     load();
@@ -477,7 +722,7 @@ ADMIN_HTML = """<!doctype html>
       clearTimeout(t);
       t = setTimeout(() => { state.search = e.target.value.trim(); load(); }, 300);
     });
-    load();
+    reload();
   });
 </script>
 </body></html>

@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from pydantic import BaseModel
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy import select, and_, or_, func, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -27,6 +27,7 @@ from app.config import settings
 from app.database import get_session
 from app.models import Event, Venue, SeriesOverride
 from app.classifier import normalize_series_name, criteria_summary, reclassify_floor
+from app.duplicates import FoldError, build_clusters, validate_fold
 from app.scrapers.manager import ScrapeManager
 from app.admin_ui import LOGIN_HTML, ADMIN_HTML
 from app import tokens
@@ -226,6 +227,21 @@ async def admin_rules() -> dict:
     return criteria_summary()
 
 
+async def _survivor_names(
+    session: AsyncSession, ids: list[Optional[int]]
+) -> dict[int, str]:
+    """Map event id to name, for the non-null ids in `ids`.
+
+    Shared by the moderation list and the duplicate queue so both label a hidden row with
+    the surviving listing's name rather than its id.
+    """
+    wanted = {i for i in ids if i is not None}
+    if not wanted:
+        return {}
+    rows = await session.execute(select(Event.id, Event.name).where(Event.id.in_(wanted)))
+    return {event_id: name for event_id, name in rows.all()}
+
+
 @router.get("/api/events", dependencies=[Depends(require_admin)])
 async def admin_events(
     filter: str = Query("non_live", pattern="^(non_live|live|all)$"),
@@ -305,6 +321,26 @@ async def admin_events(
         key = (venue_id, normalize_series_name(name))
         series_sizes[key] = series_sizes.get(key, 0) + 1
 
+    # How many hidden duplicates each event on this page has, so a surviving row can say
+    # so instead of the hidden rows simply being absent. Scoped to the ids actually shown
+    # rather than counting the whole table.
+    fold_counts: dict[int, int] = {}
+    if events:
+        fold_rows = await session.execute(
+            select(Event.duplicate_of_id, func.count())
+            .where(Event.duplicate_of_id.in_([e.id for e in events]))
+            .group_by(Event.duplicate_of_id)
+        )
+        fold_counts = {target: n for target, n in fold_rows.all()}
+
+    # The surviving row's *name*, for rows that are themselves hidden. The badge has to
+    # read "duplicate of Sub Rosa" rather than "duplicate of 41": an event id is not
+    # something an admin can recognise, and the whole point of the badge is to say which
+    # listing won. The survivor may not be on this page — it can be filtered out, or on
+    # another date entirely after a cross-date fold — so it is looked up rather than
+    # resolved from the rows already loaded.
+    survivor_names = await _survivor_names(session, [e.duplicate_of_id for e in events])
+
     out = []
     for e in events:
         series_key = normalize_series_name(e.name)
@@ -320,6 +356,13 @@ async def admin_events(
             "is_manual_override": e.is_manual_override,
             "classification_reason": e.classification_reason,
             "is_approved": e.approved_at is not None,
+            "is_manually_created": e.is_manually_created,
+            # Duplicate state (#63). A hidden row stays visible here — it is only hidden
+            # from the public calendar — so the admin can see what was suppressed and undo
+            # it, which is the entire reason duplicate_of_id is a pointer and not a delete.
+            "duplicate_of_id": e.duplicate_of_id,
+            "duplicate_of_name": survivor_names.get(e.duplicate_of_id),
+            "hidden_duplicate_count": fold_counts.get(e.id, 0),
             # Detail shown when a row is expanded, to judge live-vs-not by hand.
             # Descriptions are sparse (~10% of events), so the ticket link is often
             # the only way to settle an ambiguous one.
@@ -452,6 +495,201 @@ async def unapprove_event(
             unapproved += 1
     await session.commit()
     return {"ok": True, "id": event_id, "unapproved": unapproved}
+
+
+# --- Duplicate flagging (issue #63) ---
+
+
+class FoldBody(BaseModel):
+    """Ids to fold into the survivor named in the path."""
+
+    duplicate_ids: list[int]
+
+
+@router.get("/api/duplicates", dependencies=[Depends(require_admin)])
+async def list_duplicate_candidates(
+    future_only: bool = Query(True, description="Hide clusters before today"),
+    limit: int = Query(200, ge=1, le=1000),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Clusters of events that might be duplicates: same venue, same date, two or more.
+
+    Candidate selection is by fact rather than by title inference, deliberately — see
+    app/duplicates.py for why. Similarity only orders the result.
+
+    Defaults to future dates only, the opposite of /api/events. The classification queue
+    wants history because a series action reaches back; a duplicate is a listing problem
+    on a specific night, and past ones are archive debris nobody needs prompting about
+    (#63 notes the reconcile pass deliberately never touches them either).
+    """
+    floor = date.today() if future_only else reclassify_floor()
+
+    # Two queries rather than loading every event and grouping in Python: find the
+    # (venue, date) pairs that have two or more *unfolded* rows, then fetch the rows for
+    # those pairs only. Keeps both bounded on a table that grows without limit.
+    #
+    # Counting only unfolded rows is what makes a cluster resolve itself — folding a row
+    # drops it out of this count, so a reviewed cluster disappears with nothing recording
+    # that it was reviewed.
+    pair_rows = await session.execute(
+        select(Event.venue_id, Event.date)
+        .where(Event.date >= floor, Event.duplicate_of_id.is_(None))
+        .group_by(Event.venue_id, Event.date)
+        .having(func.count() > 1)
+    )
+    pairs = pair_rows.all()
+    if not pairs:
+        return {"clusters": [], "count": 0, "total": 0}
+
+    # Folded rows are fetched too, so a cluster can show what was previously absorbed.
+    result = await session.execute(
+        select(Event)
+        .options(joinedload(Event.venue))
+        .where(tuple_(Event.venue_id, Event.date).in_([(v, d) for v, d in pairs]))
+    )
+    rows = result.unique().scalars().all()
+
+    clusters = build_clusters(list(rows))
+    total = len(clusters)
+
+    # A hidden row's survivor is usually inside the same cluster, but not after a
+    # cross-date or cross-venue fold, so resolve names rather than reading them off the
+    # members already loaded.
+    survivor_names = await _survivor_names(
+        session, [m.duplicate_of_id for c in clusters for m in c["members"]]
+    )
+
+    out = []
+    for cluster in clusters[:limit]:
+        members = cluster["members"]
+        venue = next((m.venue for m in members if m.venue), None)
+        out.append({
+            "venue_id": cluster["venue_id"],
+            "venue_name": venue.name if venue else None,
+            "date": cluster["date"].isoformat(),
+            # Surfaced so the ordering is legible rather than mysterious, and so a queue
+            # topped by low scores is visibly "nothing likely left" instead of looking
+            # like a bug.
+            "score": round(cluster["score"], 3),
+            "all_approved": cluster["all_approved"],
+            "events": [{
+                "id": m.id,
+                "name": m.name,
+                "artist": m.artist,
+                "show_time": m.show_time.isoformat() if m.show_time else None,
+                "doors_time": m.doors_time.isoformat() if m.doors_time else None,
+                "price_min": m.price_min,
+                "ticket_url": m.ticket_url,
+                "is_live_music": m.is_live_music,
+                "is_manually_created": m.is_manually_created,
+                "is_approved": m.approved_at is not None,
+                "duplicate_of_id": m.duplicate_of_id,
+                "duplicate_of_name": survivor_names.get(m.duplicate_of_id),
+            } for m in members],
+        })
+
+    return {"clusters": out, "count": len(out), "total": total}
+
+
+@router.post("/api/events/{event_id}/absorb", dependencies=[Depends(require_admin)])
+async def absorb_duplicates(
+    event_id: int,
+    body: FoldBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Fold `body.duplicate_ids` into `event_id`, which survives.
+
+    The survivor is the path parameter because that is the direction the UI acts in: the
+    admin presses "keep this one" on the row they want, and everything else in the cluster
+    folds into it. A "mark this a duplicate" endpoint would put the id of the *loser* in
+    the path and make the caller name the winner in the body, which is the same write with
+    the reasoning inverted — and inverting it is how the wrong row gets hidden.
+
+    Folding hides rows; it never deletes them. plan_upsert's reconcile guard
+    (scraper_must_not_delete) keeps the scraper from deleting them either, which is what
+    makes this reversible at all.
+    """
+    survivor = await session.get(Event, event_id)
+    if not survivor:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    requested = list(dict.fromkeys(body.duplicate_ids))
+    rows = (await session.execute(
+        select(Event).where(Event.id.in_(requested + [event_id]))
+    )).scalars().all()
+    by_id = {r.id: r for r in rows}
+
+    missing = [i for i in requested if i not in by_id]
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Event(s) not found: {', '.join(str(i) for i in missing)}",
+        )
+
+    try:
+        ids = validate_fold(
+            event_id,
+            requested,
+            already_folded={i: by_id[i].duplicate_of_id for i in by_id},
+        )
+    except FoldError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # Refuse to fold a row that already survives other rows: those rows point at it, and
+    # hiding it would leave them hidden behind something hidden — the chain case, arriving
+    # from the other direction. validate_fold cannot see this; it needs a query.
+    dependents = (await session.execute(
+        select(Event.duplicate_of_id, func.count())
+        .where(Event.duplicate_of_id.in_(ids))
+        .group_by(Event.duplicate_of_id)
+    )).all()
+    if dependents:
+        detail = "; ".join(
+            f"event {target} already has {n} duplicate(s) folded into it"
+            for target, n in dependents
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unfold those first. {detail}",
+        )
+
+    # Warn rather than refuse on a cross-venue or cross-date fold. A rescheduled or
+    # relocated show is a real duplicate, so blocking it would make the tool useless for
+    # exactly the messy case that needs a human; but it is unusual enough to be worth a
+    # line in the log if it later looks like a mistake.
+    odd = [
+        i for i in ids
+        if by_id[i].venue_id != survivor.venue_id or by_id[i].date != survivor.date
+    ]
+    if odd:
+        logger.info(
+            f"[admin] folding across venue/date into event {event_id}: "
+            f"{', '.join(str(i) for i in odd)}"
+        )
+
+    for i in ids:
+        by_id[i].duplicate_of_id = event_id
+    await session.commit()
+    return {"ok": True, "survivor_id": event_id, "folded": ids}
+
+
+@router.post("/api/events/{event_id}/unfold", dependencies=[Depends(require_admin)])
+async def unfold_duplicate(
+    event_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Clear `event_id`'s duplicate flag, returning it to the public calendar.
+
+    Reached from the admin's "not a duplicate" control.
+    """
+    event = await session.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    was = event.duplicate_of_id
+    event.duplicate_of_id = None
+    await session.commit()
+    return {"ok": True, "id": event_id, "was_duplicate_of": was}
 
 
 @router.get("/api/series", dependencies=[Depends(require_admin)])

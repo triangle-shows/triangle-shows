@@ -18,6 +18,7 @@ from sqlalchemy.orm import joinedload
 
 from app.database import get_session
 from app.models import Event, Venue
+from app.timefmt import format_time_12h
 from app.schemas import EventResponse, FullCalendarEvent, EventListResponse
 
 # --- Router setup ---
@@ -101,7 +102,14 @@ async def get_fullcalendar_events(
     # skipping the join avoids unnecessary overhead for unfiltered calendar loads.
     needs_venue_join = bool(city or size or venue)
 
-    conditions = []
+    # A row an admin folded into another is hidden from every public path (issue #63).
+    #
+    # Server-side here, unlike is_live_music, which this endpoint deliberately does *not*
+    # filter because filters.js toggles it in the browser without refetching. There is no
+    # client-side toggle for duplicates and there should not be: the whole point of
+    # flagging one is that visitors never see it, so it must not be in the payload the
+    # calendar filters over.
+    conditions = [Event.duplicate_of_id.is_(None)]
 
     if start:
         try:
@@ -132,8 +140,9 @@ async def get_fullcalendar_events(
     query = select(Event).options(joinedload(Event.venue))
     if needs_venue_join:
         query = query.join(Event.venue)
-    if conditions:
-        query = query.where(and_(*conditions))
+    # Unconditional: `conditions` always carries the duplicate exclusion, so the old
+    # `if conditions` guard could no longer be false.
+    query = query.where(and_(*conditions))
     query = query.order_by(Event.date)
 
     result = await session.execute(query)
@@ -204,8 +213,8 @@ async def get_fullcalendar_events(
                 "venue_color": color,
                 "date": event.date.isoformat(),
                 # Strip leading zero from hour for display (e.g. "9:00 PM" not "09:00 PM").
-                "doors_time": event.doors_time.strftime("%I:%M %p").lstrip("0") if event.doors_time else None,
-                "show_time": event.show_time.strftime("%I:%M %p").lstrip("0") if event.show_time else None,
+                "doors_time": format_time_12h(event.doors_time),
+                "show_time": format_time_12h(event.show_time),
                 "ticket_url": event.ticket_url,
                 "price": price_str,
                 "price_min": event.price_min,
@@ -229,9 +238,19 @@ async def get_event(
     event_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> EventResponse:
-    """Get a single event by ID."""
+    """Get a single event by ID.
+
+    A row folded into another as a duplicate answers 404 like a row that never existed,
+    so "hidden" means hidden on every public path rather than only in the listings. The
+    site itself never calls this — frontend/js/app.js loads the calendar from
+    /api/events/fullcalendar and the modal renders from what it already has — so the
+    only callers are third parties, and leaving a back door to rows an admin has
+    suppressed would make the flag advisory.
+    """
     result = await session.execute(
-        select(Event).options(joinedload(Event.venue)).where(Event.id == event_id)
+        select(Event)
+        .options(joinedload(Event.venue))
+        .where(Event.id == event_id, Event.duplicate_of_id.is_(None))
     )
     event = result.unique().scalar_one_or_none()
     if not event:
@@ -257,7 +276,11 @@ def _list_conditions(
 
     Malformed dates are ignored rather than rejected, matching the previous behavior.
     """
-    conditions = []
+    # A row an admin folded into another as a duplicate is hidden from every public path
+    # (issue #63), and unlike include_non_music there is no parameter to opt back in — a
+    # duplicate is not a category of event a caller might want, it is a listing an admin
+    # has said should not be there.
+    conditions = [Event.duplicate_of_id.is_(None)]
 
     if start:
         try:
