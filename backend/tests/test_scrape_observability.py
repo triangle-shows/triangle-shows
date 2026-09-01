@@ -16,9 +16,15 @@ contracts are what a caller depends on; the Cloud Run CPU behavior is not testab
 and is addressed in cloudbuild.yaml instead.
 """
 
+import asyncio
+import logging
+
 from fastapi.routing import APIRoute
 
+import httpx
 import pytest
+
+from tests.helpers import StubSession, StubVenue, scrape_logs
 
 from app.main import app
 from app.scrapers.manager import ScrapeManager
@@ -81,3 +87,86 @@ class TestStartupScrapeLogsFailuresLoudly:
 
     def test_the_reclassify_result_is_logged(self, source):
         assert "last_reclassify" in source
+
+
+class TestFailedScrapesSayWhatWentWrong:
+    """A failed scrape must not describe itself as the empty string.
+
+    Issue #15: ``{"venue":"the-pinhook","status":"failed","error":""}``. The three sinks
+    in ``scrape_venue``'s except block — the log line, ``scrape_logs.error_message`` and
+    the dict returned to ``POST /api/scrape`` — all reported ``str(e)``, and ``str()`` is
+    empty for every httpx transport error and for the bare ``IndexError`` /
+    ``AttributeError`` a parser throws. Those are the two most common ways a scrape fails,
+    so the reporting went blank exactly when it was needed.
+
+    #79 was masking this: the log line never arrived at all. Fixing that (PR #88) makes
+    the line arrive, still empty after the colon — which is why this needed its own fix.
+    """
+
+    @staticmethod
+    def _failed_scrape(exc: BaseException) -> tuple[dict, list]:
+        """Run scrape_venue against a scraper that raises `exc`; return (result, logs)."""
+        class ExplodingScraper:
+            async def scrape(self):
+                raise exc
+
+        session = StubSession()
+        manager = ScrapeManager(session)
+        manager._get_scraper = lambda venue: ExplodingScraper()
+
+        result = asyncio.run(manager.scrape_venue(StubVenue()))
+        return result, scrape_logs(session)
+
+    # The real #15 shapes. httpx raises these with no message on a bare timeout, and a
+    # parser raises the builtins with no message when markup changes underneath it.
+    SILENT_FAILURES = [
+        httpx.ConnectTimeout(""),
+        httpx.ReadTimeout(""),
+        httpx.ConnectError(""),
+        httpx.RemoteProtocolError(""),
+        IndexError(),
+        AttributeError(),
+    ]
+
+    @pytest.mark.parametrize("exc", SILENT_FAILURES, ids=lambda e: type(e).__name__)
+    def test_the_response_body_names_the_failure(self, exc):
+        result, _ = self._failed_scrape(exc)
+        assert result["status"] == "failed"
+        assert result["error"] == type(exc).__name__
+
+    @pytest.mark.parametrize("exc", SILENT_FAILURES, ids=lambda e: type(e).__name__)
+    def test_the_scrape_log_row_names_the_failure(self, exc):
+        """The row is the only durable record — the one you read when asking why a venue
+        stopped updating three days ago."""
+        _, logs = self._failed_scrape(exc)
+        assert logs, "expected the failure to be recorded on a ScrapeLog"
+        assert all(row.error_message == type(exc).__name__ for row in logs)
+
+    @pytest.mark.parametrize("exc", SILENT_FAILURES, ids=lambda e: type(e).__name__)
+    def test_nothing_reports_an_empty_error(self, exc):
+        """The literal regression. Asserted separately from the shape above so that a
+        future change to the format still cannot reintroduce a blank."""
+        result, logs = self._failed_scrape(exc)
+        assert result["error"].strip() != ""
+        assert all((row.error_message or "").strip() != "" for row in logs)
+
+    def test_an_exception_with_a_message_keeps_it(self):
+        """Naming the class must not come at the cost of the message when there is one."""
+        result, _ = self._failed_scrape(ValueError("nav.eventlist returned no rows"))
+        assert result["error"] == "ValueError: nav.eventlist returned no rows"
+
+    def test_the_traceback_is_logged_but_not_persisted(self, caplog):
+        """A traceback is what separates "the venue is down" from "our parser broke", so
+        the log line needs one. It must not reach the database column or the response
+        body, which are single-line fields read by people and by the admin UI.
+        """
+        with caplog.at_level(logging.ERROR, logger="app.scrapers.manager"):
+            result, logs = self._failed_scrape(AttributeError())
+
+        records = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert records, "the failure was not logged at ERROR"
+        assert any(r.exc_info for r in records), (
+            "no traceback attached — exc_info=True is what makes a parser break diagnosable"
+        )
+        assert "Traceback" not in result["error"]
+        assert all("Traceback" not in (row.error_message or "") for row in logs)

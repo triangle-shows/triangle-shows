@@ -31,7 +31,15 @@ import threading
 import httpx
 import pytest
 
-from app.redaction import RedactingFormatter, redact_credentials, redact_handler
+from tests.helpers import StubSession, StubVenue, scrape_logs
+
+from app.redaction import (
+    REDACTED,
+    RedactingFormatter,
+    describe_exception,
+    redact_credentials,
+    redact_handler,
+)
 
 
 # Shaped exactly like the URL the Ticketmaster scraper builds
@@ -399,41 +407,6 @@ def test_configure_logging_survives_concurrent_logger_creation(preserved_logging
 # --- The non-logging sinks ---
 
 
-class _StubSession:
-    """The narrow slice of AsyncSession that scrape_venue's failure path touches.
-
-    Enough to reach the `except` block without a database, so this runs in CI's unit
-    test step — which executes before `alembic upgrade head`, and therefore against a
-    schema that does not exist yet.
-    """
-
-    def __init__(self):
-        self.added = []
-
-    async def refresh(self, obj):
-        return None
-
-    def add(self, obj):
-        self.added.append(obj)
-
-    async def flush(self):
-        return None
-
-    async def rollback(self):
-        return None
-
-    async def commit(self):
-        return None
-
-
-class _StubVenue:
-    slug = "red-hat"
-    id = 1
-    scraper_type = "ticketmaster"
-    ticketmaster_venue_id = "KovZpZAdEEvA"
-    scraper_config = None
-
-
 def test_a_failed_scrape_neither_persists_nor_returns_the_credential():
     """manager.scrape_venue's `except` block feeds three sinks off one exception string:
     a log line, scrape_logs.error_message, and the per-venue dict that POST /api/scrape
@@ -444,17 +417,17 @@ def test_a_failed_scrape_neither_persists_nor_returns_the_credential():
         async def scrape(self):
             raise _tm_error()
 
-    session = _StubSession()
+    session = StubSession()
     manager = ScrapeManager(session)
     manager._get_scraper = lambda venue: ExplodingScraper()
 
-    result = asyncio.run(manager.scrape_venue(_StubVenue()))
+    result = asyncio.run(manager.scrape_venue(StubVenue()))
 
     assert result["status"] == "failed"
     assert FAKE_KEY not in result["error"], "the response body leaked the credential"
     assert "401 Unauthorized" in result["error"], "the diagnosis itself must survive"
 
-    logs = [row for row in session.added if hasattr(row, "error_message")]
+    logs = scrape_logs(session)
     assert logs, "expected the failure to be recorded on a ScrapeLog"
     assert all(FAKE_KEY not in (row.error_message or "") for row in logs), (
         "the credential was persisted to scrape_logs.error_message"
@@ -489,3 +462,83 @@ def test_trigger_scrape_catch_all_redacts_the_credential(monkeypatch):
     detail = response.json()["detail"]
     assert FAKE_KEY not in detail, "the unauthenticated endpoint leaked the credential"
     assert "401 Unauthorized" in detail, "the diagnosis itself must survive"
+
+
+class TestDescribeException:
+    """``describe_exception`` must never return the empty string.
+
+    Issue #15 reported ``{"venue":"the-pinhook","status":"failed","error":""}``. The cause
+    was not the redaction helper or the logging config — it was ``str(exception)`` on an
+    exception carrying no message, which is the normal shape of every httpx transport
+    error. The scrape reported nothing precisely when the venue was unreachable.
+    """
+
+    # The failure modes a scraper actually hits. Every one of these stringifies to "",
+    # which is the entire bug: these are also the most common ways a scrape fails.
+    EMPTY_STR_EXCEPTIONS = [
+        httpx.ConnectTimeout(""),
+        httpx.ReadTimeout(""),
+        httpx.ConnectError(""),
+        httpx.RemoteProtocolError(""),
+        TimeoutError(),
+        asyncio.TimeoutError(),
+        IndexError(),
+        AttributeError(),
+        ValueError(),
+        KeyError(),
+    ]
+
+    @pytest.mark.parametrize(
+        "exc", EMPTY_STR_EXCEPTIONS, ids=lambda e: type(e).__name__
+    )
+    def test_the_premise_that_str_is_empty(self, exc):
+        """Guard the premise. If a future httpx gives these a default message, the bug
+        this helper exists for has changed shape and these tests should be re-read rather
+        than trusted."""
+        assert str(exc) == ""
+
+    @pytest.mark.parametrize(
+        "exc", EMPTY_STR_EXCEPTIONS, ids=lambda e: type(e).__name__
+    )
+    def test_never_returns_empty(self, exc):
+        assert describe_exception(exc) == type(exc).__name__
+
+    def test_a_message_is_kept_and_prefixed(self):
+        assert describe_exception(ValueError("No scraper available for x")) == (
+            "ValueError: No scraper available for x"
+        )
+
+    def test_the_class_name_is_added_even_when_a_message_exists(self):
+        """Uniform `Type: message` is what makes the log store greppable by failure kind,
+        so the prefix is not conditional on the message being useless."""
+        assert describe_exception(KeyError("date")).startswith("KeyError: ")
+
+    def test_credentials_in_the_message_are_still_scrubbed(self):
+        """The whole point of routing exception text through this module. A helper that
+        added the class name but dropped the redaction would be a regression."""
+        described = describe_exception(_tm_error())
+        assert FAKE_KEY not in described
+        assert REDACTED in described
+
+    def test_the_class_name_survives_redaction(self):
+        described = describe_exception(_tm_error())
+        assert described.startswith("HTTPStatusError: ")
+
+    def test_no_traceback_is_included(self):
+        """This return value goes to a database column and an API response body, not only
+        to a log line. The traceback belongs to `exc_info=True` at the log call site,
+        where the formatter can scrub it."""
+        try:
+            raise ValueError("boom")
+        except ValueError as exc:
+            described = describe_exception(exc)
+        assert described == "ValueError: boom"
+        assert "Traceback" not in described
+        assert "\n" not in described
+
+    def test_idempotent_against_a_second_redaction_pass(self):
+        """A failed Ticketmaster scrape passes through this helper and then through
+        RedactingFormatter on the way to a handler. The second pass must not mangle the
+        placeholder the first one wrote."""
+        once = describe_exception(_tm_error())
+        assert redact_credentials(once) == once
