@@ -25,16 +25,82 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import async_session
+from app.redaction import redact_credentials, redact_handler
 from app.seed import seed_venues
 from app.scheduler import scheduler, configure_scheduler
 from app.api import events, venues, health, feeds, admin
 from app import tokens
 
 # --- Logging setup ---
-logging.basicConfig(
-    level=getattr(logging, settings.LOG_LEVEL),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+
+LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+
+def configure_logging() -> None:
+    """Configure process-wide logging, with credential redaction on every sink.
+
+    Two measures, because the Ticketmaster Discovery API authenticates with a query
+    parameter and so every request URL the scraper builds is a live credential:
+
+    * ``httpx`` is pinned to WARNING. It logs the full URL of every request at INFO,
+      which put the key in the log store once per Ticketmaster venue per scrape cycle.
+      Our scrapers already emit their own per-request line naming the venue, so what is
+      lost is the HTTP status of a *successful* request; a failure still raises and is
+      logged.
+    * **Every handler in the process** — root's and everybody else's — is wrapped by
+      :func:`~app.redaction.redact_handler`, which scrubs the values out of anything
+      that renders a URL, including the exception tracebacks the httpx pin cannot
+      reach (``httpx.HTTPStatusError`` carries the request URL in its own message
+      regardless of the logger's level).
+
+      Root handlers alone are not enough. Starlette's ``ServerErrorMiddleware`` always
+      re-raises after invoking the bare-``Exception`` handler, and the ASGI server then
+      logs the full traceback itself on a logger it configures with ``propagate=False``
+      and its own handler — which no root handler ever sees. Under uvicorn that is the
+      ``uvicorn`` logger; under ``gunicorn -k UvicornWorker`` it is ``gunicorn.error``.
+      Naming those loggers here instead would make this a snapshot of today's
+      dependency set whose failure mode is a *silent* one: swap the server — an
+      ordinary deployment change touching no application code — and the sink reopens
+      with no signal and no failing test, because a test can only reach for the same
+      names the code does. Sweeping every handler is immune to that by construction.
+
+      This is safe to apply indiscriminately precisely because ``redact_handler``
+      wraps rather than replaces: a handler somebody else owns (uvicorn's access
+      formatter, a structured/JSON handler a deployment installs on root) keeps its
+      exact layout, and the wrap is idempotent, so repeat calls never nest.
+
+    Called at import, where the plain ``basicConfig`` call it replaces used to sit, so
+    the configuration is in place before the app serves anything — and exposed as a
+    function so tests can assert on it rather than importing for its side effects
+    alone. uvicorn builds its logging config in ``Config.__init__``, before it imports
+    the app, so its handlers already exist by the time this runs under a real server;
+    the sweep simply finds fewer of them under pytest or a bare interpreter.
+
+    Residue worth knowing: handlers installed *after* this runs are not covered. That
+    is a narrower bet than the one a name-based enumeration makes, but it is still a
+    bet — if a future dependency installs a handler lazily, call this again once it has.
+    """
+    logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL), format=LOG_FORMAT)
+
+    # Snapshot the registry before walking it. loggerDict is the live dict that
+    # logging.getLogger() inserts into, and the filter below runs Python between
+    # iterations, so a thread creating a logger mid-sweep would raise "dictionary
+    # changed size during iteration" out of a function that runs at import — turning a
+    # logging refinement into the app failing to boot. list() materializes in one
+    # C-level pass, which cannot observe a concurrent resize.
+    loggers = [logging.getLogger()] + [
+        existing
+        for existing in list(logging.root.manager.loggerDict.values())
+        if isinstance(existing, logging.Logger)
+    ]
+    for each in loggers:
+        for handler in each.handlers:
+            redact_handler(handler)
+
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -255,7 +321,12 @@ async def trigger_scrape(
             return {"results": results, "reclassified": manager.last_reclassify}
     except Exception as e:
         logger.error(f"[trigger_scrape] Unhandled error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        # This endpoint is unauthenticated whenever SCRAPE_ALLOWED_SERVICE_ACCOUNTS is
+        # unset, and failures here happen *outside* scrape_venue (session construction,
+        # a scraper import, the reclassify pass) — before the manager's own redaction
+        # runs — so this catch-all has to scrub independently rather than rely on the
+        # per-venue result dict having been scrubbed already.
+        raise HTTPException(status_code=500, detail=redact_credentials(str(e)))
 
 
 # --- Static file serving ---
