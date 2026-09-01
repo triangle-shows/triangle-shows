@@ -37,9 +37,10 @@ class Row:
     hash: str
     external_id: Optional[str] = None
     updated_at: Optional[datetime] = None
-    # Defaults to False so every existing construction site keeps working; only the
-    # manual-event tests below set it.
+    # Both default to "ordinary scraped row" so every existing construction site keeps
+    # working; only the manual-event and duplicate tests below set them.
     is_manually_created: bool = False
+    duplicate_of_id: Optional[int] = None
 
 
 def scraped(name: str, on: date = TODAY, external_id: Optional[str] = None) -> ScrapedEvent:
@@ -429,4 +430,170 @@ class TestManualEventsSurviveReconcile:
 
         plan = plan_upsert([past, row_for(listed, id=2)], [listed], TODAY)
 
+        assert plan.expired == []
+
+
+def duplicate_row(
+    id: int, of: int, on: date = TODAY, name: str = "[LATE] Sub Rosa"
+) -> Row:
+    """A row an admin folded into row `of` as a duplicate (issue #63)."""
+    return Row(
+        id=id,
+        date=on,
+        hash=f"dupe-{id}",
+        external_id=None,
+        updated_at=datetime(2026, 8, 30),
+        duplicate_of_id=of,
+    )
+
+
+class TestFlaggedDuplicatesSurviveReconcile:
+    """A row an admin folded into another is hidden, not gone — that is the whole point of
+    `duplicate_of_id` being a pointer rather than a delete.
+
+    The failure mode is quiet, which is why these are worth having: the row is already
+    hidden from the calendar, so a reconcile that deletes it looks like nothing at all
+    until someone tries to unmark it and finds the row and the mapping both gone.
+    """
+
+    def test_not_orphaned_when_the_scrape_stops_returning_it(self):
+        """The core case. A duplicate listing usually *is* dropped by the venue eventually
+        — that is often why it was a duplicate — so this is the common path, not the edge.
+        """
+        dupe = duplicate_row(2, of=1)
+        survivor = scraped("Sub Rosa")
+
+        plan = plan_upsert([row_for(survivor, id=1), dupe], [survivor], TODAY)
+
+        assert dupe not in plan.expired
+        assert dupe not in plan.superseded
+        assert plan.expired == []
+
+    def test_an_ordinary_dropped_listing_beside_it_still_expires(self):
+        """The guard must not switch reconcile off in general."""
+        dupe = duplicate_row(2, of=1)
+        dropped = row_for(scraped("Cancelled Show"), id=3)
+        survivor = scraped("Sub Rosa")
+
+        plan = plan_upsert(
+            [row_for(survivor, id=1), dupe, dropped], [survivor], TODAY
+        )
+
+        assert dropped in plan.expired
+        assert dupe not in plan.expired
+
+    def test_never_chosen_as_the_survivor(self):
+        """A flagged duplicate has already been judged not to be the canonical row, so it
+        must lose the candidate sort even when every other key favours it — here it is both
+        an exact title match and the fresher row."""
+        listed = scraped("Sub Rosa", external_id="abc")
+        canonical = Row(
+            id=1,
+            date=listed.date,
+            hash="stale-title",           # title does NOT match what the source says now
+            external_id="abc",
+            updated_at=datetime(2026, 8, 1),  # and it is staler
+        )
+        dupe = Row(
+            id=2,
+            date=listed.date,
+            hash=listed.hash,            # exact title match, would otherwise win
+            external_id="abc",
+            updated_at=datetime(2026, 8, 31),  # and fresher
+            duplicate_of_id=1,
+        )
+
+        plan = plan_upsert([canonical, dupe], [listed], TODAY)
+
+        kept = [row for _, row in plan.updates]
+        assert kept == [canonical], "a flagged duplicate was chosen as the canonical row"
+
+    def test_losing_the_sort_does_not_delete_it(self):
+        """The second deletion path. Losing the sort means "not canonical", not "delete me"
+        — but the loser is `superseded`, and superseded rows are deleted in the same pass.
+        Reached whenever one scraped event matches both a survivor and a duplicate folded
+        into it, which external_id makes routine."""
+        listed = scraped("Sub Rosa", external_id="abc")
+        canonical = Row(
+            id=1,
+            date=listed.date,
+            hash=listed.hash,
+            external_id="abc",
+            updated_at=datetime(2026, 8, 31),
+        )
+        dupe = Row(
+            id=2,
+            date=listed.date,
+            hash="dupe-2",
+            external_id="abc",
+            updated_at=datetime(2026, 8, 30),
+            duplicate_of_id=1,
+        )
+
+        plan = plan_upsert([canonical, dupe], [listed], TODAY)
+
+        assert [row for _, row in plan.updates] == [canonical]
+        assert dupe not in plan.superseded, "the audit trail was deleted as superseded"
+        assert dupe not in plan.expired, "and it must not fall through to the orphan pass"
+
+    def test_a_row_that_is_both_hand_added_and_flagged_is_not_canonical(self):
+        """The combination the manual key alone gets backwards.
+
+        An admin adds a show by hand, later decides it duplicates another row and folds it
+        in. Ranking on `is_manually_created` first would make that row win the sort and
+        become the canonical listing again — undoing the admin's own second decision. The
+        duplicate key has to outrank the manual key for this to come out right.
+        """
+        listed = scraped("Sub Rosa", external_id="abc")
+        canonical = Row(
+            id=1,
+            date=listed.date,
+            hash=listed.hash,
+            external_id="abc",
+            updated_at=datetime(2026, 8, 1),
+        )
+        both = Row(
+            id=2,
+            date=listed.date,
+            hash="manual-2",
+            external_id="abc",
+            updated_at=datetime(2026, 8, 31),
+            is_manually_created=True,
+            duplicate_of_id=1,
+        )
+
+        plan = plan_upsert([canonical, both], [listed], TODAY)
+
+        assert [row for _, row in plan.updates] == [canonical]
+        assert both not in plan.superseded, "a hand-added row was deleted"
+        assert both not in plan.expired
+
+    def test_two_hand_added_rows_matching_one_event_both_survive(self):
+        """Not about duplicates, but the same hole: before the superseded guard, two manual
+        rows matching one scraped event meant one of them was deleted by the scraper."""
+        listed = scraped("Hand-Added Benefit Show", external_id="abc")
+        first = manual_row(1)
+        first.external_id = "abc"
+        second = manual_row(2)
+        second.external_id = "abc"
+        second.updated_at = datetime(2026, 8, 31)
+
+        plan = plan_upsert([first, second], [listed], TODAY)
+
+        assert len(plan.updates) == 1, "exactly one row should take the scraped detail"
+        assert plan.superseded == [], "the other hand-added row was deleted"
+        assert plan.expired == []
+
+    def test_a_duplicate_the_scrape_still_lists_is_updated_in_place(self):
+        """A venue that keeps listing the duplicate should keep the row current — it stays
+        hidden either way, and letting it go stale would make unmarking it later show
+        outdated detail."""
+        dupe_listing = scraped("[LATE] Sub Rosa")
+        dupe = duplicate_row(2, of=1)
+        dupe.hash = dupe_listing.hash
+
+        plan = plan_upsert([dupe], [dupe_listing], TODAY)
+
+        assert [row for _, row in plan.updates] == [dupe]
+        assert plan.inserts == [], "a new row would orphan the admin's mapping"
         assert plan.expired == []
