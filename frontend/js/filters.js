@@ -306,7 +306,14 @@ function subscribeToVenues() {
   const allCbs  = [...document.querySelectorAll(".venue-checkbox input[type=checkbox]")];
   const checked = allCbs.filter(cb => cb.checked);
   const params = new URLSearchParams();
-  if (checked.length > 0 && checked.length < allCbs.length) {
+
+  // "Everything is ticked, so no filter is needed" holds only on the main site, where the
+  // sidebar lists every venue. On a city-scoped site it lists that city's venues alone, so
+  // omitting the filter subscribes the visitor to the whole Triangle — the opposite of the
+  // page they are looking at. Measured on the Durham site: 8 of 8 ticked produced a bare
+  // /feeds/events.ics and a calendar full of Raleigh and Chapel Hill shows.
+  const cityScoped = typeof SITE_CONFIG === "object" && !!SITE_CONFIG.city;
+  if (checked.length > 0 && (cityScoped || checked.length < allCbs.length)) {
     params.set("venue", checked.map(cb => cb.dataset.venue).join(","));
   }
   // Match the feed to what the visitor is viewing: if they've opted into

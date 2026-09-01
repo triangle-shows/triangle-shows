@@ -28,6 +28,10 @@ Browser
   ├── triangle-shows.org ──► Cloudflare ──► 301 redirect ──► triangle-shows.net
   │                          (never reaches an origin server)
   │
+  ├── durm-shows.net ──────┐  (and durm.triangle-shows.net)
+  │                        │   same app, same origin; the Durham variant is chosen
+  │                        │   client-side from the hostname, not by routing
+  │                        ▼
   └── triangle-shows.net ──► Cloudflare DNS (proxied)
                                │
                                ├─ SSL terminated here (Full mode, free managed cert)
@@ -77,10 +81,49 @@ contacted.
 |---|---|---|---|---|
 | triangle-shows.net | CNAME | `@` | the hashed `.run.app` hostname | Yes |
 | triangle-shows.net | CNAME | `www` | the hashed `.run.app` hostname | Yes |
+| triangle-shows.net | CNAME | `durm` | the hashed `.run.app` hostname | Yes |
 | triangle-shows.org | A | `@` | `192.0.2.1` (dummy) | Yes |
+| durm-shows.net | CNAME | `@` | the hashed `.run.app` hostname | Yes |
+| durm-shows.net | CNAME | `www` | the hashed `.run.app` hostname | Yes |
+
+Every hostname that should reach the app needs **two** things, not one: a proxied DNS
+record *and* a Worker route. The record alone gets the request to Cloudflare, where it
+arrives with `Host: durm-shows.net` and Cloud Run answers 404 — the Worker is what rewrites
+the Host header. See "Sites and hostnames" below.
 
 SSL mode is **Full**, with Always Use HTTPS on. Full works because the `.run.app` origin carries
 a valid Google-managed certificate.
+
+### Sites and hostnames
+
+One deployment serves both sites. There is no second service, no second build, and nothing
+host-aware on the backend — the Worker rewrites every incoming Host to the `.run.app` name,
+so FastAPI cannot tell the hostnames apart and does not need to.
+
+The Durham variant is selected **client-side**, by `detectSiteConfig()` in
+`frontend/js/config.js`, from `window.location.hostname`:
+
+| Hostname | Site |
+|---|---|
+| `durm-shows.net`, `www.durm-shows.net` | Durham |
+| `durm.*` (i.e. `durm.triangle-shows.net`) | Durham |
+| `durm-shows.localhost` | Durham — local preview only |
+| anything else | main Triangle site |
+
+That variant filters venues to `SITE_CONFIG.city`, swaps the ASCII title and subtitle, and
+pins the `durham` palette while hiding the palette picker.
+
+**Adding another city site** therefore needs three things and no infrastructure work beyond
+the first two:
+
+1. A proxied DNS record for the hostname, pointing at the hashed `.run.app` name
+2. A Worker route covering `<hostname>/*`, so the Host header gets rewritten
+3. A branch in `detectSiteConfig()` returning that city's config
+
+**Consequence worth remembering:** because selection is client-side and the origin is
+host-blind, a hostname with DNS but no Worker route returns 404 for the whole site, and a
+hostname with both but no `detectSiteConfig()` branch silently serves the *main* Triangle
+site rather than erroring.
 
 ### Origin hostnames
 
