@@ -27,7 +27,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import settings
 from app.classifier import classification_updates, reclassify_floor, ALWAYS_LIVE_VENUE_SLUGS
-from app.models import Venue, Event, ScrapeLog, SeriesOverride
+from app.models import Venue, Event, ScrapeLog, SeriesOverride, MANUAL_SCRAPER_TYPE
+from app.redaction import describe_exception
 from app.scrapers.base import BaseScraper, ScrapedEvent
 from app.scrapers.ticketmaster import TicketmasterScraper
 
@@ -93,6 +94,46 @@ def dedupe_scraped(scraped_events: list[ScrapedEvent]) -> list[ScrapedEvent]:
     return out
 
 
+def scraper_must_not_delete(row: Any) -> bool:
+    """True for a row whose existence is a human decision, so reconcile must leave it.
+
+    Reconcile deletes any row inside the scraped window the scrape did not return, which
+    is right for a listing a venue dropped and wrong for anything a person put there
+    deliberately. This is the one place that distinction lives; add to it rather than
+    growing another predicate somewhere else.
+
+    Two flags qualify:
+
+    `is_manually_created` — a hand-added event, which a scraper by definition never
+    returns, so without this every manual event at a scraped venue would be deleted on the
+    next run of that venue's scraper.
+
+    `duplicate_of_id` — a row an admin folded into another (issue #63). It is hidden rather
+    than gone precisely so the judgement stays reversible and auditable, so deleting it
+    destroys the thing the column exists for. Easy to miss, because the row is already
+    hidden from the calendar: nothing looks wrong until someone tries to unmark it and
+    finds it gone.
+
+    The flags rather than `source`: _apply_scraped() writes `row.source = se.source`
+    whenever a scraped event matches a stored row, so a source-based test stops protecting
+    a row the first time the venue lists the same show — and the row is deleted on the run
+    after that, having looked protected the whole time. Nothing in the scraper path writes
+    these flags, which is the property that makes them trustworthy here.
+
+    Both deletion paths in plan_upsert have to consult this, not just the orphan filter.
+    The loser of the candidate sort is `superseded`, and superseded rows are deleted in the
+    same pass — see the call sites.
+
+    getattr, not attribute access: plan_upsert is deliberately callable with lightweight
+    stand-ins (see tests/test_dedup.py), and this should not force every one of them to
+    declare every flag.
+    """
+    return bool(
+        getattr(row, "is_manually_created", False)
+        or getattr(row, "duplicate_of_id", None) is not None
+    )
+
+
 def plan_upsert(existing: list[Any], scraped_events: list[ScrapedEvent], today: date) -> UpsertPlan:
     """Match a scrape run against the rows already stored for one venue.
 
@@ -144,10 +185,26 @@ def plan_upsert(existing: list[Any], scraped_events: list[ScrapedEvent], today: 
             plan.inserts.append(se)
             continue
 
-        # Prefer the row whose title already matches what the source says now; fall back
-        # to the most recently seen row. Both keys are total, so the choice is stable.
+        # Rank, most significant key first: not-a-duplicate, then hand-added, then the row
+        # whose title already matches what the source says now, then the most recently seen
+        # row. Every key is total, so the choice is stable.
+        #
+        # "Not a duplicate" outranks "hand-added" rather than the other way round. A row an
+        # admin flagged as a duplicate has already been judged not to be the canonical one,
+        # so it must never be chosen as the survivor — and that judgement holds even for a
+        # row that was *also* added by hand, which is the combination the manual key alone
+        # would get backwards.
+        #
+        # The manual key still leads over the hash and recency keys: a venue that later
+        # lists a show an admin had already added by hand should enrich the curated row via
+        # _apply_scraped, not discard it in favour of the scraped one.
         unique.sort(
-            key=lambda r: (r.hash == se.hash, r.updated_at or datetime.min),
+            key=lambda r: (
+                getattr(r, "duplicate_of_id", None) is None,
+                getattr(r, "is_manually_created", False),
+                r.hash == se.hash,
+                r.updated_at or datetime.min,
+            ),
             reverse=True,
         )
         keep, rest = unique[0], unique[1:]
@@ -155,7 +212,18 @@ def plan_upsert(existing: list[Any], scraped_events: list[ScrapedEvent], today: 
         plan.updates.append((se, keep))
         for row in rest:
             claimed.add(row.id)
-            plan.superseded.append(row)
+            # Losing the sort means "not the canonical row", which is not the same as
+            # "delete me" — superseded rows are deleted further down. A human-owned row
+            # that loses is simply left alone: it stays claimed, so the orphan filter
+            # below skips it too, and it survives the run untouched.
+            #
+            # This is the second deletion path, and it is reachable in two ways the sort
+            # key cannot fix by itself. One scraped event can match both a survivor and a
+            # duplicate an admin folded into it (via external_id and hash respectively),
+            # which would delete the audit trail; and two hand-added rows can match the
+            # same scraped event, which would delete one of them.
+            if not scraper_must_not_delete(row):
+                plan.superseded.append(row)
 
     # --- Reconcile ---
     # Only rows inside the window the scraper actually covered are candidates. A scraper
@@ -164,7 +232,9 @@ def plan_upsert(existing: list[Any], scraped_events: list[ScrapedEvent], today: 
     # own listings as soon as they happen.
     horizon = max(se.date for se in scraped_events)
     in_window = [r for r in existing if today <= r.date <= horizon]
-    orphans = [r for r in in_window if r.id not in claimed]
+    orphans = [
+        r for r in in_window if r.id not in claimed and not scraper_must_not_delete(r)
+    ]
 
     if orphans:
         too_lossy = (
@@ -177,6 +247,44 @@ def plan_upsert(existing: list[Any], scraped_events: list[ScrapedEvent], today: 
             plan.expired = orphans
 
     return plan
+
+
+def event_from_scraped(se: ScrapedEvent, venue_id: int) -> Event:
+    """Build a new Event row from a ScrapedEvent.
+
+    Extracted so the admin's manual-add endpoint constructs rows the same way a scrape
+    does, rather than maintaining a parallel field list that drifts. That matters more
+    than it looks: ScrapedEvent.__post_init__ cleans the title and validates the ticket
+    and image URLs, and ScrapedEvent.hash is the dedup key. A hand-added event routed
+    through the same dataclass therefore gets the same normalization, and — because the
+    hash is computed identically — a venue that later lists a show an admin already added
+    matches the admin's row instead of inserting a second one.
+
+    Does not set is_manually_created; the caller does. Nothing in the scraper path should
+    ever write that flag (see scraper_must_not_delete).
+    """
+    return Event(
+        external_id=se.external_id,
+        venue_id=venue_id,
+        name=se.name,
+        artist=se.artist,
+        support_artists=se.support_artists,
+        date=se.date,
+        doors_time=se.doors_time,
+        show_time=se.show_time,
+        ticket_url=se.ticket_url,
+        price_min=se.price_min,
+        price_max=se.price_max,
+        image_url=se.image_url,
+        genre=se.genre,
+        subgenre=se.subgenre,
+        status=se.status,
+        age_restriction=se.age_restriction,
+        description=se.description,
+        source=se.source,
+        source_url=se.source_url,
+        hash=se.hash,
+    )
 
 
 # --- ScrapeManager ---
@@ -193,7 +301,16 @@ class ScrapeManager:
         self.last_reclassify: Optional[dict] = None
 
     def _get_scraper(self, venue: Venue) -> Optional[BaseScraper]:
-        """Instantiate the correct scraper for a venue."""
+        """Instantiate the correct scraper for a venue, or None if there is none.
+
+        A manual venue (a promoter, a one-off series) has no source to scrape, so None is
+        the correct and expected answer for it — not a misconfiguration. scrape_all filters
+        these out before reaching here; this branch exists so that a manual venue arriving
+        by some other path fails as a clear no-op rather than looking like a broken
+        scraper_type.
+        """
+        if venue.scraper_type == MANUAL_SCRAPER_TYPE:
+            return None
         if venue.scraper_type == "ticketmaster":
             if not venue.ticketmaster_venue_id:
                 logger.warning(f"No TM venue ID for {venue.slug}")
@@ -295,20 +412,39 @@ class ScrapeManager:
             }
 
         except Exception as e:
-            logger.error(f"[{venue_slug}] Scrape failed: {e}")
+            # httpx.HTTPStatusError stringifies to include the full request URL, and the
+            # Ticketmaster scraper authenticates with an ?apikey= query parameter — so the
+            # raw exception text is a live credential. It reaches three sinks from here:
+            # this log line, the scrape_logs row below, and the dict returned to
+            # POST /api/scrape. describe_exception redacts once, at the top.
+            #
+            # It also names the exception class, which is the whole of what those three
+            # sinks reported for a timeout: every httpx transport error has an empty
+            # str(), so `error` came back as "" exactly when a venue was unreachable
+            # (issue #15). "ReadTimeout" is not a diagnosis, but it separates "the venue
+            # is down" from "our parser broke", which is the first question asked.
+            message = describe_exception(e)
+            # exc_info because the class name is not enough for the parser-broke case:
+            # `AttributeError` needs the frame that raised it. Safe to attach here —
+            # RedactingFormatter is a formatter rather than a filter specifically so
+            # that rendered tracebacks are scrubbed too (see app/redaction.py).
+            logger.error(f"[{venue_slug}] Scrape failed: {message}", exc_info=True)
             try:
                 # Roll back the failed transaction before writing the error log,
                 # otherwise the commit below will also fail.
                 await self.session.rollback()
                 log.status = "failed"
-                log.error_message = str(e)[:2000]  # cap length to fit DB column
+                log.error_message = message[:2000]  # cap length to fit DB column
                 log.finished_at = datetime.utcnow()
                 log.duration_seconds = (log.finished_at - log.started_at).total_seconds()
                 self.session.add(log)
                 await self.session.commit()
             except Exception as log_err:
-                logger.warning(f"[{venue_slug}] Could not write error log: {log_err}")
-            return {"venue": venue_slug, "status": "failed", "error": str(e)}
+                logger.warning(
+                    f"[{venue_slug}] Could not write error log: {describe_exception(log_err)}",
+                    exc_info=True,
+                )
+            return {"venue": venue_slug, "status": "failed", "error": message}
 
     # --- Upsert helpers ---
 
@@ -380,28 +516,7 @@ class ScrapeManager:
             self._apply_scraped(row, se)
 
         for se in plan.inserts:
-            self.session.add(Event(
-                external_id=se.external_id,
-                venue_id=venue_id,
-                name=se.name,
-                artist=se.artist,
-                support_artists=se.support_artists,
-                date=se.date,
-                doors_time=se.doors_time,
-                show_time=se.show_time,
-                ticket_url=se.ticket_url,
-                price_min=se.price_min,
-                price_max=se.price_max,
-                image_url=se.image_url,
-                genre=se.genre,
-                subgenre=se.subgenre,
-                status=se.status,
-                age_restriction=se.age_restriction,
-                description=se.description,
-                source=se.source,
-                source_url=se.source_url,
-                hash=se.hash,
-            ))
+            self.session.add(event_from_scraped(se, venue_id))
 
         await self.session.flush()
         return {
@@ -480,11 +595,33 @@ class ScrapeManager:
 
     # --- Bulk scrape entry points ---
 
-    async def scrape_all(self, scraper_types: Optional[list[str]] = None) -> list[dict]:
-        """Scrape all venues (or those matching given scraper_types)."""
-        query = select(Venue)
+    async def scrape_all(
+        self,
+        scraper_types: Optional[list[str]] = None,
+        exclude_scraper_types: Optional[list[str]] = None,
+    ) -> list[dict]:
+        """Scrape all venues, optionally narrowed to or away from given scraper_types.
+
+        The single venue-selection query for the whole class — scrape_ticketmaster and
+        scrape_indie both come through here. That is deliberate: scrape_indie previously
+        built its own query and so missed the manual-venue exclusion below, which is the
+        kind of omission a second query invites.
+
+        Venues whose scraper_type is MANUAL_SCRAPER_TYPE are excluded unconditionally, and
+        this is a guardrail rather than an optimisation. There is no scraper for them by
+        design, so _get_scraper returns None, scrape_venue raises "No scraper available",
+        and every one of them would write a failed ScrapeLog row on every cycle — for each
+        promoter an admin adds, indefinitely. The scrape would still look broken in the logs
+        while working perfectly.
+
+        Excluded even when scraper_types names them explicitly: there is nothing to scrape,
+        so an explicit request is a mistake rather than an override.
+        """
+        query = select(Venue).where(Venue.scraper_type != MANUAL_SCRAPER_TYPE)
         if scraper_types:
             query = query.where(Venue.scraper_type.in_(scraper_types))
+        if exclude_scraper_types:
+            query = query.where(Venue.scraper_type.notin_(exclude_scraper_types))
         result = await self.session.execute(query)
         venues = result.scalars().all()
 
@@ -505,17 +642,17 @@ class ScrapeManager:
         return await self.scrape_all(scraper_types=["ticketmaster"])
 
     async def scrape_indie(self) -> list[dict]:
-        """Scrape only non-Ticketmaster venues."""
-        query = select(Venue).where(Venue.scraper_type != "ticketmaster")
-        result = await self.session.execute(query)
-        venues = result.scalars().all()
+        """Scrape only non-Ticketmaster venues.
 
-        results = []
-        for venue in venues:
-            r = await self.scrape_venue(venue)
-            results.append(r)
+        Delegates rather than running its own query. It used to build
+        `select(Venue).where(scraper_type != "ticketmaster")` and loop itself, which meant a
+        second venue query that did *not* pick up the manual-venue exclusion — so every
+        promerter an admin created would be scraped here, fail for want of a scraper, and
+        write a failed ScrapeLog three times a day (this is a scheduled job). Only dormant
+        in production because ENABLE_SCHEDULER is false there.
 
-        # Recompute live-music flags across all upcoming events now that new data is in.
-        self.last_reclassify = await self.reclassify_all()
-
-        return results
+        One query in this class is the fix, not a tidy-up: any venue-selection rule added in
+        future now applies to every entry point automatically instead of needing to be
+        remembered twice.
+        """
+        return await self.scrape_all(exclude_scraper_types=["ticketmaster"])

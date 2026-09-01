@@ -56,6 +56,34 @@ See [SELF-HOSTING.md](docs/SELF-HOSTING.md) for setup instructions.
 
 ---
 
+## Running the tests
+
+Two suites, and CI runs both on every pull request.
+
+**Backend** — pytest, from `backend/`:
+
+```bash
+python -m pytest tests -q
+```
+
+A handful of migration tests need a reachable PostgreSQL server and skip cleanly without
+one, so a local run with no database still passes. CI stands up a Postgres service
+container, so they do run there.
+
+**Frontend** — Node's built-in test runner, from the repo root:
+
+```bash
+node --test frontend/tests/
+```
+
+No `package.json`, no `npm install`, no dependencies: these use only `node:test`,
+`node:assert`, `node:fs`, `node:path` and `node:vm`. Requires Node 18 or newer. Keeping
+them dependency-free is deliberate — a browser-less runner that needs no toolchain is
+what makes it reasonable to test plain `<script>` files at all, by evaluating them in a
+`vm` context with only the globals they actually touch.
+
+---
+
 ## Project structure
 
 ```
@@ -78,6 +106,7 @@ frontend/
     config.js       # Color palettes, API base URL, site config
     modal.js        # Event detail modal
     favorites.js    # Heart, hide, restore, and export logic
+  tests/            # Node built-in test runner, no dependencies
 tools/              # Dev utilities (see below)
   mockups/          # Static HTML design explorations
 docs/               # Architecture and self-hosting guides
@@ -118,6 +147,22 @@ Each venue is handled by one scraper type. Last updated 2026-06-29 — may drift
 | `webflow_cms` | Pour House |
 
 The authoritative source is [`backend/app/seed.py`](backend/app/seed.py) — each venue dict has a `scraper_type` field.
+
+---
+
+## Credentials in request URLs
+
+The Ticketmaster Discovery API authenticates with a query parameter (`?apikey=`) rather than a header, so every request URL the Ticketmaster scraper builds *is* a live credential. Four sinks would otherwise carry it out of the process, and closing one leaves the others open:
+
+| Sink | Closed by |
+|---|---|
+| `httpx` logs every request at INFO with the full query string | `app.main.configure_logging` pins the `httpx` logger to WARNING |
+| `httpx.HTTPStatusError` embeds the URL in `str(e)`, which is logged on a failed scrape | `RedactingFormatter`, installed on every log handler in the process (so it covers exception tracebacks too) |
+| An exception escaping a *route* is re-raised by Starlette's `ServerErrorMiddleware` and logged by the ASGI server on its own error logger — which has `propagate=False` and its own handler, so it never passes a root handler | the same sweep: `configure_logging` wraps *every* handler, not root's, via `redaction.redact_handler`, which preserves each handler's existing format instead of replacing it |
+| That same string is persisted to `scrape_logs.error_message` and returned in the per-venue result dict from `POST /api/scrape` | `manager.scrape_venue` redacts once, before all three uses |
+| `POST /api/scrape`'s catch-all also returns `detail=str(e)`, but on failures *outside* `scrape_venue` — session construction, a scraper import — that never pass through its redaction | `main.trigger_scrape` redacts independently, in its own `except` block |
+
+`backend/app/redaction.py::redact_credentials` is the shared helper. It is a **denylist** of parameter names and therefore never complete — a new scraper authenticating with an unlisted parameter needs an entry there and a case in the parametrized test in `backend/tests/test_redaction.py`, not a nearby entry that happens to look similar. Only the value is removed, so a redacted URL still says which venue was being fetched and with what paging.
 
 ---
 

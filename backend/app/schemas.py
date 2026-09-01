@@ -10,9 +10,33 @@ Requires: models.py (ORM objects are converted via from_attributes=True),
 
 # --- Imports ---
 
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator
 from datetime import date, time, datetime
-from typing import Optional
+from typing import Annotated, Optional
+
+
+# --- Shared field types ---
+
+def _none_if_not_absolute_http_url(value):
+    """Coerce a non-absolute-http(s) ``ticket_url``/``image_url`` to ``None``.
+
+    Both fields are third-party-sourced (see
+    ``app.scrapers.base.ScrapedEvent.__post_init__``, which applies the same rule at
+    ingestion) and are rendered into HTML attributes by the web client. This is a
+    second, independent gate at the API boundary: it covers rows written before that
+    ingestion-time normalization existed, and anything that reaches the database by
+    a path other than a scraper. A relative path, a ``javascript:``/``data:`` scheme,
+    or a non-string value must never reach a client as-is, but a single malformed
+    field must not fail the whole event, so this normalizes rather than raises.
+    """
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value if value.lower().startswith(("http://", "https://")) else None
+
+
+# A ticket_url/image_url, normalized to an absolute http(s) string or None.
+OptionalHttpUrl = Annotated[Optional[str], BeforeValidator(_none_if_not_absolute_http_url)]
 
 
 # --- Venue Schema ---
@@ -28,6 +52,11 @@ class VenueResponse(BaseModel):
     website: Optional[str] = None
     scraper_type: str
     color: str  # Hex color used for calendar event styling per venue
+    # How many events this venue has from today onward, after duplicates are excluded.
+    # Present so the filter sidebar can say how much a venue would actually contribute —
+    # and so a hand-added promoter with nothing coming up can be left out of the list
+    # entirely rather than offered as a filter that selects nothing.
+    upcoming_event_count: int = 0
 
     # Allow constructing directly from a SQLAlchemy Venue ORM instance
     model_config = {"from_attributes": True}
@@ -45,10 +74,10 @@ class EventResponse(BaseModel):
     date: date
     doors_time: Optional[time] = None
     show_time: Optional[time] = None
-    ticket_url: Optional[str] = None
+    ticket_url: OptionalHttpUrl = None
     price_min: Optional[float] = None
     price_max: Optional[float] = None
-    image_url: Optional[str] = None
+    image_url: OptionalHttpUrl = None
     genre: Optional[str] = None
     subgenre: Optional[str] = None
     status: str

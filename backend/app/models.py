@@ -10,11 +10,25 @@ Requires: app.database (Base), PostgreSQL via asyncpg/SQLAlchemy async.
 
 from datetime import datetime, date, time
 from typing import Optional
-from sqlalchemy import String, Integer, Float, Text, Date, Time, DateTime, ForeignKey, JSON, Boolean, UniqueConstraint
+from sqlalchemy import String, Integer, Float, Text, Date, Time, DateTime, ForeignKey, JSON, Boolean, UniqueConstraint, CheckConstraint, Index, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 
 from app.database import Base
+
+
+# --- Constants ---
+
+# Venue.scraper_type for a venue nothing scrapes: a promoter, a festival, a one-off series
+# an admin created by hand so that events can hang off something.
+#
+# A string in an existing column rather than a new boolean, so this needed no migration —
+# but it is load-bearing in two places and must not be spelled inline in either.
+# ScrapeManager.scrape_all() excludes these venues, without which each one would write a
+# failed ScrapeLog on every cycle (there is deliberately no scraper for them), and
+# app.api.venues hides them from the public venue list while they have no upcoming events,
+# so an empty promoter is not offered as a filter.
+MANUAL_SCRAPER_TYPE = "manual"
 
 
 # --- Enums ---
@@ -99,6 +113,37 @@ class Event(Base):
     # manually overridden (is_manual_override=True), which are left untouched.
     is_live_music: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     is_manual_override: Mapped[bool] = mapped_column(Boolean, default=False)  # True once an admin sets the flag by hand
+    # True when an admin created this row by hand rather than a scraper finding it.
+    #
+    # Distinct from is_manual_override above, which records a hand-set live-music
+    # *verdict*. A row can be manually created and auto-classified, or scraped and
+    # manually overridden; conflating the two makes either signal unreadable.
+    #
+    # Load-bearing for reconcile: plan_upsert() deletes any row inside the scraped date
+    # window that the scrape did not return, and a hand-added event never is. Nothing in
+    # the scraper path writes this flag — deliberately, because _apply_scraped() does
+    # write `source`, so filtering orphans on source would lose the protection the first
+    # time a venue listed a show that had already been added by hand.
+    is_manually_created: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    # Set by an admin to the id of the surviving row when this event is a duplicate of it
+    # (issue #63). Null means "not a duplicate", which is every scraped row.
+    #
+    # A pointer rather than a `hidden_as_duplicate` boolean, so the judgement stays
+    # auditable and undoable: the admin UI can show what was folded into a survivor, and
+    # ON DELETE SET NULL means deleting the survivor un-hides this row rather than leaving
+    # it hidden behind a row that no longer exists.
+    #
+    # Load-bearing for reconcile in the same way is_manually_created is, and for the same
+    # reason — a flagged duplicate inside the scraped window that the scrape stops
+    # returning would otherwise be deleted, destroying exactly the audit trail the column
+    # exists to keep. See scrapers/manager.scraper_must_not_delete.
+    #
+    # No self-referential relationship() yet: nothing reads the pointer until #63 adds the
+    # admin controls, and an unused relationship on a self-join is a configuration to
+    # maintain rather than a convenience.
+    duplicate_of_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("events.id", ondelete="SET NULL"), nullable=True
+    )
     classification_reason: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # human-readable why, e.g. "recurring: 6 dates", "keyword: trivia", "manual"
     # Set when an admin confirms the current classification is correct; the admin list
     # hides approved events by default. Records agreement with a *verdict*, not the
@@ -110,6 +155,23 @@ class Event(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     venue: Mapped["Venue"] = relationship(back_populates="events")
+
+    # Declared here as well as in migration 0006 so `alembic revision --autogenerate`
+    # compares equal against a live database and does not propose dropping either one.
+    # The index is partial because the read paths ask `duplicate_of_id IS NULL`, which
+    # matches nearly every row and is better served by a scan; the lookup that needs an
+    # index is the admin's "what was folded into this row", which only touches non-nulls.
+    __table_args__ = (
+        CheckConstraint(
+            "duplicate_of_id IS NULL OR duplicate_of_id <> id",
+            name="ck_events_duplicate_of_not_self",
+        ),
+        Index(
+            "ix_events_duplicate_of_id",
+            "duplicate_of_id",
+            postgresql_where=text("duplicate_of_id IS NOT NULL"),
+        ),
+    )
 
 
 class ScrapeLog(Base):

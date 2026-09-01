@@ -23,6 +23,7 @@ from sqlalchemy.orm import joinedload
 # --- Internal imports ---
 from app.database import get_session
 from app.models import Event, Venue
+from app.timefmt import format_time_12h
 
 # --- Router setup ---
 router = APIRouter(prefix="/feeds", tags=["feeds"])
@@ -46,6 +47,12 @@ async def get_ical_feed(
     today = date.today()
     # Only include upcoming events — no historical clutter in subscribers' calendars
     conditions = [Event.date >= today]
+    # A row an admin folded into another as a duplicate never reaches a subscriber
+    # (issue #63). No opt-in, unlike include_non_music: a duplicate is not a kind of
+    # event someone might want, it is a listing that should not exist. This matters more
+    # here than on the calendar — a subscribed feed writes into someone's own calendar,
+    # where a duplicate entry is not merely clutter but a second reminder for one show.
+    conditions.append(Event.duplicate_of_id.is_(None))
     # Mirror the on-site calendar: hide non-live-music events unless opted in.
     if not include_non_music:
         conditions.append(Event.is_live_music.is_(True))
@@ -118,9 +125,9 @@ async def get_ical_feed(
         if event.support_artists:
             desc_parts.append(f"w/ {event.support_artists}")
         if event.doors_time:
-            desc_parts.append(f"Doors: {event.doors_time.strftime('%-I:%M %p')}")
+            desc_parts.append(f"Doors: {format_time_12h(event.doors_time)}")
         if event.show_time:
-            desc_parts.append(f"Show: {event.show_time.strftime('%-I:%M %p')}")
+            desc_parts.append(f"Show: {format_time_12h(event.show_time)}")
         if event.price_min is not None:
             if event.price_min == 0:
                 desc_parts.append("Free")

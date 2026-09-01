@@ -131,9 +131,29 @@ class TestListConditions:
         assert "is_live_music" not in opted_in
 
     def test_a_malformed_date_is_ignored_rather_than_raising(self):
-        """Pre-existing behavior, preserved through the extraction."""
-        conditions = _list_conditions(start="not-a-date", include_non_music=True)
-        assert conditions == []
+        """Pre-existing behavior, preserved through the extraction.
+
+        Asserts on the absence of a *date* clause rather than on an empty list: the
+        duplicate exclusion (#63) is now unconditional, so the baseline is one clause
+        rather than none. Checking for `events.date` keeps the original meaning — that a
+        malformed date is dropped instead of raising — without the count standing in for it.
+        """
+        sql = self._sql(_list_conditions(start="not-a-date", include_non_music=True))
+        assert "events.date" not in sql
+        assert "is_live_music" not in sql
+
+    def test_folded_duplicates_are_excluded_by_default(self):
+        """A row an admin folded into another must not reach the public list (#63)."""
+        assert "duplicate_of_id" in self._sql(_list_conditions())
+
+    def test_there_is_no_opt_in_for_folded_duplicates(self):
+        """Unlike include_non_music. A duplicate is not a category of event a caller might
+        legitimately want — it is a listing an admin has said should not be there — so the
+        exclusion survives every combination of parameters."""
+        assert "duplicate_of_id" in self._sql(_list_conditions(include_non_music=True))
+        assert "duplicate_of_id" in self._sql(
+            _list_conditions(search="band", genre="rock", status="onsale", start="2026-09-01")
+        )
 
 
 class TestListFiltering:

@@ -132,6 +132,96 @@ ADMIN_HTML = """<!doctype html>
   #rules { white-space:pre-wrap; background:#17171a; border:1px solid #2a2a2e; padding:0.8rem;
            border-radius:2px; font-size:0.72rem; margin-top:1rem; color:#b8b6b3; }
   .hidden { display:none; }
+  /* --- Duplicate review (#63) --- */
+  /* text-transform:none, unlike every other badge. This is the only badge whose text
+     contains user data — the surviving listing's name — and act names are often
+     deliberately cased ("MF DOOM", "girl in red", "SOPHIE"). Uppercasing them throws that
+     away and reads as shouting. The badge keeps its pill and colour, so the inconsistency
+     is a casing difference in exchange for not mangling a band's name. */
+  .b.dupe { background:#3d2033; color:#e08ac8; text-transform:none; }
+  /* One card per candidate cluster. A card rather than more table rows because the unit
+     of decision is the cluster, not the row: the admin picks a winner from a small set,
+     and a bordered group makes the boundary of that choice unambiguous. */
+  .cluster { border:1px solid #2a2a2e; border-radius:2px; margin-bottom:0.7rem; background:#141417; }
+  .cluster > .chead { display:flex; align-items:baseline; gap:0.6rem; flex-wrap:wrap;
+           padding:0.5rem 0.7rem; border-bottom:1px solid #1e1e22; }
+  .cluster > .chead .cv { color:#e8e6e3; font-weight:700; }
+  .cluster > .chead .cd { color:#a8a6a3; }
+  .cluster > .chead .sp { flex:1; }
+  .score { color:#8a8a8e; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.06em; }
+  .crow { display:flex; align-items:baseline; gap:0.6rem; flex-wrap:wrap; padding:0.45rem 0.7rem;
+          border-bottom:1px solid #1a1a1e; }
+  .crow:last-child { border-bottom:none; }
+  .crow .ct { flex:1; min-width:12rem; color:#e8e6e3; }
+  .crow .cm { color:#8a8a8e; font-size:0.72rem; }
+  .crow button { font-family:inherit; font-size:0.68rem; padding:0.22rem 0.5rem;
+          border:1px solid #3a3a3e; background:transparent; color:#c8c6c3; cursor:pointer; border-radius:2px; }
+  .crow button.keep { border-color:#2f5c40; color:#7fd69a; }
+  .crow button.keep:hover { background:#1f3d2a; }
+  .crow button:hover { border-color:var(--accent); color:var(--accent); }
+  /* A hidden row is indented under the cluster and dimmed, so "hidden from the public
+     calendar" reads visually rather than needing the badge to be parsed. */
+  .crow.hiddenrow { padding-left:1.7rem; border-left:2px solid #3d2033; background:#121215; }
+  .crow.hiddenrow .ct { color:#8a8a8e; }
+  #dupes .empty { border:1px solid #2a2a2e; border-radius:2px; background:#141417; }
+  #err { color:#e0625f; font-size:0.75rem; margin:0 0 0.7rem; min-height:1em; }
+  #ok { color:#7fd69a; font-size:0.75rem; margin:0 0 0.7rem; min-height:1em; }
+  /* --- Manual event entry --- */
+  #add { border:1px solid #2a2a2e; border-radius:2px; background:#141417; padding:1rem; max-width:68ch; }
+  #add h2 { font-size:0.72rem; text-transform:uppercase; letter-spacing:0.08em;
+            color:var(--accent); margin:0 0 0.2rem; }
+  #add .hint { color:#8a8a8e; font-size:0.72rem; line-height:1.5; margin:0 0 0.9rem; }
+  /* Two columns on a roomy screen, one when narrow. A date and a time sitting side by
+     side is the pairing that actually helps; everything else just wants to be scannable. */
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(15rem, 1fr)); gap:0.6rem 0.9rem; }
+  .f { display:flex; flex-direction:column; gap:0.2rem; }
+  .f.wide { grid-column:1 / -1; }
+  .f label { color:#a8a6a3; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.06em; }
+  .f label .req { color:var(--accent); }
+  .f input, .f select, .f textarea {
+     font-family:inherit; font-size:0.8rem; padding:0.35rem 0.5rem; border-radius:2px;
+     background:#17171a; border:1px solid #2a2a2e; color:#e8e6e3; }
+  .f input:focus, .f select:focus, .f textarea:focus { outline:none; border-color:var(--accent); }
+  .f textarea { resize:vertical; min-height:3.4rem; }
+  .f .note { color:#8a8a8e; font-size:0.66rem; }
+  .f.check { flex-direction:row; align-items:center; gap:0.45rem; }
+  .f.check input { width:auto; }
+  .f.check label { text-transform:none; letter-spacing:0; font-size:0.75rem; color:#c8c6c3; }
+  /* The new-promoter fields sit inside the same form, revealed by the venue dropdown,
+     rather than in a separate dialog — creating the promoter and creating its first event
+     is one intention, and a modal would make it two. */
+  #newVenue { grid-column:1 / -1; border-left:2px solid var(--accent); padding-left:0.8rem;
+              margin:0.2rem 0; display:grid; grid-template-columns:repeat(auto-fit, minmax(13rem, 1fr));
+              gap:0.6rem 0.9rem; }
+  /* Required because the rule above sets `display` from an id selector. `.hidden` is a
+     single class (specificity 0-1-0) and loses to `#newVenue` (1-0-0), so toggling the
+     class did nothing and the new-promoter fields were permanently visible. This is the
+     only id rule in the file that sets display; every other .hidden target leaves it
+     unset, which is why the pattern works everywhere else. */
+  #newVenue.hidden { display:none; }
+  #add .actions { margin-top:1rem; display:flex; gap:0.6rem; align-items:center; }
+  #add button.go { font-family:inherit; font-size:0.75rem; text-transform:uppercase;
+     letter-spacing:0.06em; padding:0.4rem 0.9rem; border:1px solid var(--accent);
+     background:var(--accent); color:#0e0e10; font-weight:700; cursor:pointer; border-radius:2px; }
+  #add button.go:hover { filter:brightness(1.1); }
+  #add button.go:disabled { opacity:0.5; cursor:default; filter:none; }
+  /* Delete is the only control here that destroys rather than hides, so it is the only one
+     coloured as a warning. Muted rather than a solid red fill: it sits in a row of ordinary
+     actions and should read as "careful", not as the primary thing to press. */
+  button.danger { border-color:#5c2f2f !important; color:#e08a88 !important; }
+  button.danger:hover:not(:disabled) { border-color:#e0625f !important; color:#e0625f !important;
+                                       background:#2a1616 !important; }
+  button.danger:disabled { opacity:0.45; cursor:default; }
+  #venueList { margin-top:1.6rem; border-top:1px solid #2a2a2e; padding-top:0.6rem; }
+  .vrow { display:flex; align-items:center; gap:0.6rem; padding:0.35rem 0;
+          border-bottom:1px solid #1a1a1e; }
+  .vrow:last-child { border-bottom:none; }
+  .vrow .sw { width:0.8rem; height:0.8rem; border-radius:2px; flex:none; }
+  .vrow .vn { color:#e8e6e3; flex:1; }
+  .vrow .cm { color:#8a8a8e; font-size:0.72rem; }
+  .vrow button { font-family:inherit; font-size:0.68rem; padding:0.22rem 0.5rem;
+          border:1px solid #3a3a3e; background:transparent; color:#c8c6c3; cursor:pointer;
+          border-radius:2px; }
 </style>
 </head><body>
   <header>
@@ -143,6 +233,11 @@ ADMIN_HTML = """<!doctype html>
   </header>
   <main>
     <div class="controls">
+      <button class="fbtn on" data-v="queue" onclick="setView('queue')">review queue</button>
+      <button class="fbtn" data-v="duplicates" onclick="setView('duplicates')">duplicates</button>
+      <button class="fbtn" data-v="add" onclick="setView('add')">add event</button>
+    </div>
+    <div class="controls" id="queueControls">
       <button class="fbtn on" data-f="non_live" onclick="setFilter('non_live')">non-live</button>
       <button class="fbtn" data-f="live" onclick="setFilter('live')">live</button>
       <button class="fbtn" data-f="all" onclick="setFilter('all')">all</button>
@@ -152,6 +247,12 @@ ADMIN_HTML = """<!doctype html>
       <input id="search" placeholder="search name / artist...">
       <span id="count"></span>
     </div>
+    <div class="controls hidden" id="dupeControls">
+      <button class="fbtn tog on" id="dupeFutureBtn" aria-pressed="true" onclick="toggleDupeFuture()">future dates only</button>
+      <span id="dupeCount"></span>
+    </div>
+    <p id="err"></p>
+    <p id="ok"></p>
     <pre id="rules" class="hidden"></pre>
     <div id="help" class="hidden">
       <h2>What this page is for</h2>
@@ -197,21 +298,162 @@ ADMIN_HTML = """<!doctype html>
       <p><b>detection rules</b> lists the automatic criteria: keyword matches, and how many
       repeats at one venue count as a recurring series. Anything auto-flagged shows its
       reason next to the badge.</p>
+
+      <h2>Duplicates</h2>
+      <p>The <b>duplicates</b> tab lists every case of one venue having two or more listings
+      on one night. That's the only thing it checks — no title matching decides anything,
+      because rules that compared titles got this wrong twice, in opposite directions.
+      Similarity is used <i>only</i> to sort the list, so the likely duplicates are at the
+      top and being wrong about the order costs nothing.</p>
+      <p><b>Two different shows on one night is normal</b> — an early and a late set, a
+      support show in the back room. Those will appear here and you should leave them. The
+      list isn't a to-do list you can empty; it's the set of nights worth a glance.</p>
+      <p><b>keep this one</b> is pressed on the listing you want to survive; every other
+      listing on that night is then hidden as a duplicate of it. You press the row you're
+      keeping, not the ones you're hiding, so there's no way to get the direction
+      backwards.</p>
+      <p>This <b>hides, it doesn't delete</b>. The hidden row stays in the database,
+      recorded as a duplicate of the one you kept. It disappears from the public calendar
+      and the subscription feed, but stays visible to you — here, and in the review queue
+      with a pink <b>duplicate of "…"</b> badge naming the listing that won. <b>not a
+      duplicate</b> brings it straight back.</p>
+      <p>Nothing else can strand it, either. If you later delete the listing you kept, the
+      hidden ones reappear on the calendar by themselves rather than staying hidden behind
+      a row that no longer exists. And the scraper won't undo your decision: a row you've
+      hidden is protected from the pass that deletes listings a venue has stopped
+      advertising.</p>
     </div>
-    <table>
+    <table id="queueTable">
       <thead><tr><th>date</th><th>event</th><th>status</th><th>actions</th></tr></thead>
       <tbody id="tbody"></tbody>
     </table>
+    <div id="dupes" class="hidden"></div>
+    <div id="add" class="hidden">
+      <h2>Add an event by hand</h2>
+      <p class="hint">For anything no scraper will find — a promoter's show, a festival
+      stage, a one-off at a room that doesn't publish listings. It appears on the public
+      calendar immediately, and the scraper won't remove it.</p>
+      <form id="addForm" onsubmit="submitEvent(event)">
+        <div class="grid">
+          <div class="f wide">
+            <label for="fVenue">venue <span class="req">*</span></label>
+            <select id="fVenue" onchange="venueChanged()" required></select>
+            <span class="note" id="fVenueNote"></span>
+          </div>
+
+          <div id="newVenue" class="hidden">
+            <div class="f">
+              <label for="nvName">promoter / venue name <span class="req">*</span></label>
+              <input id="nvName" type="text" placeholder="e.g. Sharp 9 Gallery">
+            </div>
+            <div class="f">
+              <label for="nvCity">city <span class="req">*</span></label>
+              <input id="nvCity" type="text" list="cityList" placeholder="Durham">
+              <datalist id="cityList"></datalist>
+              <span class="note">the public site groups and filters by this</span>
+            </div>
+            <div class="f">
+              <label for="nvSize">size</label>
+              <select id="nvSize">
+                <option value="small">small</option>
+                <option value="medium">medium</option>
+                <option value="large">large</option>
+              </select>
+            </div>
+            <div class="f">
+              <label for="nvColor">colour</label>
+              <input id="nvColor" type="text" placeholder="chosen for you">
+              <span class="note">leave blank to get one no other venue is using</span>
+            </div>
+          </div>
+
+          <div class="f wide">
+            <label for="fName">event name <span class="req">*</span></label>
+            <input id="fName" type="text" required placeholder="e.g. Sub Rosa">
+          </div>
+          <div class="f">
+            <label for="fArtist">artist</label>
+            <input id="fArtist" type="text">
+            <span class="note">shown instead of the event name when set</span>
+          </div>
+          <div class="f">
+            <label for="fSupport">support</label>
+            <input id="fSupport" type="text">
+          </div>
+          <div class="f">
+            <label for="fDate">date <span class="req">*</span></label>
+            <input id="fDate" type="date" required>
+          </div>
+          <div class="f">
+            <label for="fShow">show time</label>
+            <input id="fShow" type="time">
+          </div>
+          <div class="f">
+            <label for="fDoors">doors</label>
+            <input id="fDoors" type="time">
+          </div>
+          <div class="f">
+            <label for="fAge">ages</label>
+            <input id="fAge" type="text" placeholder="e.g. 18+">
+          </div>
+          <div class="f">
+            <label for="fPriceMin">price from</label>
+            <input id="fPriceMin" type="number" min="0" step="1" placeholder="0 for free">
+          </div>
+          <div class="f">
+            <label for="fPriceMax">price to</label>
+            <input id="fPriceMax" type="number" min="0" step="1">
+          </div>
+          <div class="f">
+            <label for="fGenre">genre</label>
+            <input id="fGenre" type="text">
+          </div>
+          <div class="f wide">
+            <label for="fUrl">ticket link</label>
+            <input id="fUrl" type="url" placeholder="https://...">
+            <span class="note">dropped if it isn't a working http(s) link</span>
+          </div>
+          <div class="f wide">
+            <label for="fDesc">description</label>
+            <textarea id="fDesc"></textarea>
+          </div>
+          <div class="f check wide">
+            <input id="fLive" type="checkbox" checked>
+            <label for="fLive">live music — untick for comedy, trivia, a DJ night, a
+            club night. Visitors can hide non-live events, and this setting is yours: the
+            detector will never overwrite it.</label>
+          </div>
+        </div>
+        <div class="actions">
+          <button type="submit" class="go" id="fSubmit">add event</button>
+        </div>
+      </form>
+      <div id="venueList"></div>
+    </div>
   </main>
 <script>
   let RULES = null;
   const $ = (s) => document.querySelector(s);
-  const state = { filter: 'non_live', search: '', futureOnly: false, showApproved: false };
+  // dupeFutureOnly defaults true, matching the endpoint: a duplicate is a problem with a
+  // specific upcoming night, and past ones are archive debris nobody needs prompting about.
+  const state = {
+    view: 'queue', filter: 'non_live', search: '', futureOnly: false, showApproved: false,
+    dupeFutureOnly: true,
+  };
 
   async function api(path, opts) {
     const r = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
     if (r.status === 401) { location.href = '/admin/login'; throw new Error('unauth'); }
-    if (!r.ok) throw new Error('http ' + r.status);
+    if (!r.ok) {
+      // Carry the server's `detail` through. The fold endpoints refuse a chain or a
+      // self-reference with a sentence explaining which row to use instead, and throwing
+      // a bare 'http 400' would discard exactly the part the admin needs to act on.
+      let detail = null;
+      try { detail = (await r.json()).detail; } catch (_) {}
+      const err = new Error(detail || ('http ' + r.status));
+      err.detail = detail;
+      throw err;
+    }
     return r.status === 204 ? null : r.json();
   }
 
@@ -220,9 +462,27 @@ ADMIN_HTML = """<!doctype html>
   }
 
   function badge(ev) {
+    // The duplicate badge leads. A hidden row is out of the public calendar whatever its
+    // live-music verdict says, so showing the verdict first would describe a row by a flag
+    // that currently has no effect.
+    //
+    // Named, not numbered: "duplicate of Sub Rosa" is something an admin can recognise;
+    // "duplicate of 41" is not. The name can be missing if the survivor was deleted
+    // between the two queries, so fall back rather than printing "undefined".
+    let dupe = '';
+    if (ev.duplicate_of_id) {
+      const of = ev.duplicate_of_name
+        ? 'duplicate of "' + esc(ev.duplicate_of_name) + '"'
+        : 'hidden as a duplicate';
+      dupe = '<span class="b dupe">' + of + '</span> ';
+    } else if (ev.hidden_duplicate_count) {
+      const n = ev.hidden_duplicate_count;
+      dupe = '<span class="b dupe">' + n + ' hidden duplicate' + (n === 1 ? '' : 's') +
+             '</span> ';
+    }
     if (ev.is_manual_override)
-      return '<span class="b manual">manual: ' + (ev.is_live_music ? 'live' : 'non-live') + '</span>';
-    return '<span class="b ' + (ev.is_live_music ? 'live' : 'nonlive') + '">' +
+      return dupe + '<span class="b manual">manual: ' + (ev.is_live_music ? 'live' : 'non-live') + '</span>';
+    return dupe + '<span class="b ' + (ev.is_live_music ? 'live' : 'nonlive') + '">' +
            (ev.is_live_music ? 'live' : 'non-live') + '</span> ' +
            '<span class="reason">' + esc(ev.classification_reason || '') + '</span>';
   }
@@ -237,7 +497,25 @@ ADMIN_HTML = """<!doctype html>
   }
 
   function actions(ev) {
-    let a = approveAction(ev, false, 1) + ' ';
+    // A hidden row gets one action and no others. Its classification is moot while it is
+    // hidden, and offering "mark live" on a row nobody can see invites the admin to spend
+    // a decision on something with no effect.
+    //
+    // "not a duplicate" says what clicking it asserts. "unfold" only meant anything to a
+    // reader who already knew the folding metaphor — and that metaphor was wrong anyway:
+    // it implies the two rows were combined, when nothing is combined and the row is only
+    // hidden with a pointer to the survivor.
+    if (ev.duplicate_of_id) {
+      return '<button onclick="unfold(' + ev.id + ')">not a duplicate</button>';
+    }
+    // Delete is offered only on hand-added rows, matching the endpoint. A scraped event
+    // would return on the next scrape, so the button would look broken; and it is the one
+    // control here that destroys rather than hides, so it should not appear on rows where
+    // hiding is the right answer.
+    let a = ev.is_manually_created
+      ? '<button class="danger" onclick="deleteEvent(' + ev.id + ',' + JSON.stringify(esc(ev.name)) + ')">delete</button> '
+      : '';
+    a += approveAction(ev, false, 1) + ' ';
     if (ev.is_manual_override) {
       a += '<button onclick="clearOv(' + ev.id + ')">clear override</button>';
     } else {
@@ -402,6 +680,310 @@ ADMIN_HTML = """<!doctype html>
     render(data.events, data.count, data.total, data.approved_hidden);
   }
 
+  // --- Duplicate review (#63) ---
+
+  function timeLabel(ev) {
+    // Time is the field that actually distinguishes an early show from a late one, so it
+    // is the most useful thing to put next to two near-identical titles.
+    const t = ev.show_time || ev.doors_time;
+    if (!t) return '<span class="cm">no time listed</span>';
+    const kind = ev.show_time ? 'show' : 'doors';
+    return '<span class="cm">' + kind + ' ' + esc(t.slice(0, 5)) + '</span>';
+  }
+
+  function clusterRow(ev, survivors) {
+    if (ev.duplicate_of_id) {
+      const of = ev.duplicate_of_name
+        ? 'duplicate of "' + esc(ev.duplicate_of_name) + '"'
+        : 'hidden as a duplicate';
+      return '<div class="crow hiddenrow">' +
+        '<span class="ct">' + esc(ev.name) + '</span>' + timeLabel(ev) +
+        '<span class="b dupe">' + of + '</span>' +
+        '<button onclick="unfold(' + ev.id + ')">not a duplicate</button></div>';
+    }
+    // "keep this one" acts on the row the admin wants to survive, and hides every other
+    // visible row in the cluster as a duplicate of it. Acting on the winner rather than
+    // the loser is
+    // deliberate: a "mark as duplicate" button sits on the row that loses and forces the
+    // admin to reason about the other row while clicking this one, which is how the wrong
+    // row gets hidden.
+    const others = survivors.filter((s) => s !== ev.id);
+    const n = others.length;
+    const label = n === 1 ? 'keep this one' : 'keep this one (hides ' + n + ')';
+    return '<div class="crow">' +
+      '<span class="ct">' + esc(ev.name) + '</span>' + timeLabel(ev) +
+      (ev.is_manually_created ? '<span class="b manual">hand-added</span>' : '') +
+      (ev.is_approved ? '<span class="b live">approved</span>' : '') +
+      '<button class="keep" onclick="absorb(' + ev.id + ',[' + others.join(',') + '])">' +
+        label + '</button></div>';
+  }
+
+  function renderDuplicates(data) {
+    const shown = data.count, total = data.total;
+    $('#dupeCount').innerHTML = total
+      ? (shown < total ? '<span class="warn">' + shown + ' of ' + total + ' shown</span>'
+                       : shown + ' cluster(s)')
+      : '';
+    if (!data.clusters.length) {
+      $('#dupes').innerHTML = '<div class="empty">no venue has two listings on one night' +
+        (state.dupeFutureOnly ? ' from today onward' : '') + '</div>';
+      return;
+    }
+    let html = '';
+    data.clusters.forEach((c) => {
+      const survivors = c.events.filter((e) => !e.duplicate_of_id).map((e) => e.id);
+      html += '<div class="cluster">' +
+        '<div class="chead"><span class="cv">' + esc(c.venue_name || 'unknown venue') + '</span>' +
+        '<span class="cd">' + c.date + '</span><span class="sp"></span>' +
+        // Surfaced so the ordering is legible: a queue whose top score is low means
+        // nothing likely is left, rather than looking like the sort is broken.
+        '<span class="score">similarity ' + c.score.toFixed(2) + '</span></div>';
+      c.events.forEach((ev) => { html += clusterRow(ev, survivors); });
+      html += '</div>';
+    });
+    $('#dupes').innerHTML = html;
+  }
+
+  async function loadDuplicates() {
+    const q = new URLSearchParams({ future_only: state.dupeFutureOnly ? 'true' : 'false' });
+    renderDuplicates(await api('/admin/api/duplicates?' + q.toString()));
+  }
+
+  function showError(e) {
+    $('#err').textContent = (e && (e.detail || e.message)) || 'something went wrong';
+  }
+
+  // Every fold action goes through here. The catch has to live in the *action*, not in
+  // reload(): api() throws, so an uncaught rejection escapes the click handler entirely
+  // and reload() is never reached — the admin sees an unchanged page and no message,
+  // which is the silent failure the error line exists to prevent. The fold endpoints
+  // refuse a chain with a sentence naming the row to use instead, and that sentence is
+  // the whole value of surfacing it.
+  async function foldAction(fn) {
+    $('#err').textContent = '';
+    try {
+      await fn();
+    } catch (e) {
+      showError(e);
+      return;
+    }
+    reload();
+  }
+
+  async function deleteEvent(id, name) {
+    // Named in the prompt, because "delete this event?" on a list of near-identical rows
+    // is how the wrong one goes. Says permanent, because unlike hiding it is.
+    if (!confirm('Delete "' + name + '" permanently?\\n\\n' +
+                 'This cannot be undone. Only hand-added events can be deleted.')) return;
+    await foldAction(async () => {
+      const r = await api('/admin/api/events/' + id, { method: 'DELETE' });
+      // Deleting a survivor un-hides whatever was folded into it (ON DELETE SET NULL), so
+      // the calendar can gain rows from a delete. Surprising enough to say out loud.
+      if (r && r.restored_duplicates) {
+        $('#ok').textContent = 'Deleted. ' + r.restored_duplicates + ' listing' +
+          (r.restored_duplicates === 1 ? '' : 's') +
+          ' that had been hidden as duplicates of it are visible again.';
+      }
+    });
+  }
+
+  async function deleteVenue(id, name) {
+    if (!confirm('Delete the venue "' + name + '" permanently?\\n\\n' +
+                 'Only possible while it has no events at all.')) return;
+    await foldAction(() => api('/admin/api/venues/' + id, { method: 'DELETE' }));
+    if (state.view === 'add') await loadVenues(null);
+  }
+
+  async function absorb(survivorId, duplicateIds) {
+    // Folding hides rows rather than deleting them, and every fold is undoable from the
+    // row it creates — so this asks once, plainly, rather than with a scary warning.
+    const n = duplicateIds.length;
+    if (!confirm('Hide ' + n + ' other listing' + (n === 1 ? '' : 's') +
+                 ' on this night, keeping the one you chose?\\n\\n' +
+                 'They stay in the database, and you can restore any of them here at any time.')) return;
+    await foldAction(() => api('/admin/api/events/' + survivorId + '/absorb',
+              { method: 'POST', body: JSON.stringify({ duplicate_ids: duplicateIds }) }));
+  }
+
+  async function unfold(id) {
+    await foldAction(() => api('/admin/api/events/' + id + '/unfold', { method: 'POST' }));
+  }
+
+  // --- Manual event entry ---
+
+  const NEW_VENUE = '__new__';
+
+  function venueChanged() {
+    const isNew = $('#fVenue').value === NEW_VENUE;
+    $('#newVenue').classList.toggle('hidden', !isNew);
+    // required is toggled rather than fixed in the markup: a hidden required field blocks
+    // submit with a browser message pointing at something the admin cannot see.
+    ['#nvName', '#nvCity'].forEach((id) => { $(id).required = isNew; });
+
+    const opt = $('#fVenue').selectedOptions[0];
+    const n = opt && opt.dataset.count ? Number(opt.dataset.count) : null;
+    $('#fVenueNote').textContent = isNew || n === null ? ''
+      : (n === 0 ? 'nothing else coming up at this venue'
+                 : n + ' other event' + (n === 1 ? '' : 's') + ' coming up here');
+  }
+
+  async function loadVenues(selectId) {
+    const data = await api('/admin/api/venues');
+    const opt = (v) =>
+      '<option value="' + v.id + '" data-count="' + v.upcoming_event_count + '">' +
+      esc(v.name) + ' · ' + esc(v.city) + '</option>';
+    // Scraped and hand-added are separated because they answer different questions —
+    // "a real room hosting something its listings won't carry" versus "there is no venue".
+    // One alphabetical list buries the second kind as soon as there are a few.
+    let html = '<option value="" disabled' + (selectId ? '' : ' selected') + '>choose…</option>';
+    if (data.manual.length) {
+      html += '<optgroup label="promoters and one-offs">' + data.manual.map(opt).join('') + '</optgroup>';
+    }
+    html += '<optgroup label="scraped venues">' + data.scraped.map(opt).join('') + '</optgroup>';
+    html += '<option value="' + NEW_VENUE + '">＋ new promoter or venue…</option>';
+    $('#fVenue').innerHTML = html;
+    if (selectId) $('#fVenue').value = String(selectId);
+
+    // Offer the cities already in use, so a new promoter lands in an existing group
+    // instead of creating "durham" alongside "Durham" and splitting the sidebar.
+    const cities = [...new Set(data.scraped.concat(data.manual).map((v) => v.city))].sort();
+    $('#cityList').innerHTML = cities.map((c) => '<option value="' + esc(c) + '"></option>').join('');
+
+    // The promoters an admin has created, with a way to remove one entered by mistake.
+    // Scraped venues are deliberately absent: they cannot be deleted, so listing them here
+    // would only offer a button that always refuses.
+    if (!data.manual.length) {
+      $('#venueList').innerHTML = '';
+    } else {
+      $('#venueList').innerHTML = '<h2>Promoters you have added</h2>' +
+        '<p class="hint">Delete removes the venue itself. It only works once the venue has ' +
+        'no events at all — otherwise removing it would take them with it.</p>' +
+        data.manual.map((v) => {
+          const n = v.upcoming_event_count;
+          const busy = n > 0;
+          return '<div class="vrow">' +
+            '<span class="sw" style="background:' + esc(v.color) + '"></span>' +
+            '<span class="vn">' + esc(v.name) + '</span>' +
+            '<span class="cm">' + esc(v.city) + '</span>' +
+            '<span class="cm">' + (busy ? n + ' upcoming' : 'nothing upcoming') + '</span>' +
+            '<button class="danger"' + (busy ? ' disabled title="delete its events first"' : '') +
+              ' onclick="deleteVenue(' + v.id + ',' + JSON.stringify(esc(v.name)) + ')">delete</button>' +
+            '</div>';
+        }).join('');
+    }
+    venueChanged();
+  }
+
+  function fieldValue(id) {
+    const el = $(id);
+    const v = (el.value || '').trim();
+    return v === '' ? null : v;
+  }
+
+  async function submitEvent(ev) {
+    ev.preventDefault();
+    $('#err').textContent = '';
+    $('#ok').textContent = '';
+    const btn = $('#fSubmit');
+    btn.disabled = true;
+    try {
+      let venueId = $('#fVenue').value;
+
+      // Creating the promoter first, in its own request. Two writes rather than one
+      // endpoint that does both: if the event is rejected — a clashing hash, a mistyped
+      // year — the promoter still exists and is selected, so the admin fixes one field
+      // and resubmits instead of retyping the venue as well.
+      if (venueId === NEW_VENUE) {
+        const created = await api('/admin/api/venues', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: fieldValue('#nvName'),
+            city: fieldValue('#nvCity'),
+            size_category: $('#nvSize').value,
+            color: fieldValue('#nvColor'),
+          }),
+        });
+        venueId = created.id;
+        await loadVenues(venueId);
+        $('#ok').textContent = 'Created ' + created.name + ' (' + created.color + ').';
+      }
+
+      const num = (id) => {
+        const v = fieldValue(id);
+        return v === null ? null : Number(v);
+      };
+      const created = await api('/admin/api/events', {
+        method: 'POST',
+        body: JSON.stringify({
+          venue_id: Number(venueId),
+          name: fieldValue('#fName'),
+          date: fieldValue('#fDate'),
+          artist: fieldValue('#fArtist'),
+          support_artists: fieldValue('#fSupport'),
+          doors_time: fieldValue('#fDoors'),
+          show_time: fieldValue('#fShow'),
+          ticket_url: fieldValue('#fUrl'),
+          price_min: num('#fPriceMin'),
+          price_max: num('#fPriceMax'),
+          description: fieldValue('#fDesc'),
+          genre: fieldValue('#fGenre'),
+          age_restriction: fieldValue('#fAge'),
+          is_live_music: $('#fLive').checked,
+        }),
+      });
+      // Keep the venue and date, clear the rest. Adding several shows for one promoter on
+      // one night, or a run of dates, is the common case; retyping the venue each time is
+      // the friction that makes an admin batch them up and put it off.
+      ['#fName', '#fArtist', '#fSupport', '#fDoors', '#fShow', '#fUrl',
+       '#fPriceMin', '#fPriceMax', '#fDesc', '#fGenre', '#fAge'].forEach((id) => { $(id).value = ''; });
+      $('#fLive').checked = true;
+      $('#ok').textContent = 'Added "' + created.name + '" at ' + created.venue_name +
+                             ' on ' + created.date + '. Venue and date kept for the next one.';
+      await loadVenues(venueId);
+      $('#fName').focus();
+    } catch (e) {
+      showError(e);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function setView(v) {
+    state.view = v;
+    document.querySelectorAll('.fbtn[data-v]').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+    $('#queueControls').classList.toggle('hidden', v !== 'queue');
+    $('#queueTable').classList.toggle('hidden', v !== 'queue');
+    $('#dupeControls').classList.toggle('hidden', v !== 'duplicates');
+    $('#dupes').classList.toggle('hidden', v !== 'duplicates');
+    $('#add').classList.toggle('hidden', v !== 'add');
+    $('#err').textContent = '';
+    $('#ok').textContent = '';
+    reload();
+  }
+
+  function toggleDupeFuture() {
+    state.dupeFutureOnly = !state.dupeFutureOnly;
+    $('#dupeFutureBtn').classList.toggle('on', state.dupeFutureOnly);
+    $('#dupeFutureBtn').setAttribute('aria-pressed', state.dupeFutureOnly ? 'true' : 'false');
+    loadDuplicates();
+  }
+
+  // Single entry point so an action can refresh whichever view is open without each
+  // handler having to know which one that is. absorb/unfold are reachable from both.
+  // Its own catch covers a failure to *load*; a failed action is caught in foldAction,
+  // which never gets here.
+  async function reload() {
+    try {
+      if (state.view === 'duplicates') await loadDuplicates();
+      // The add form is loaded, not reloaded: refetching venues on every action would
+      // reset the dropdown mid-typing. loadVenues() is called explicitly after a write.
+      else if (state.view === 'add') await loadVenues($('#fVenue').value || null);
+      else await load();
+    } catch (e) {
+      showError(e);
+    }
+  }
+
   async function ov(id, isLive) {
     await api('/admin/api/events/' + id + '/override', { method: 'POST', body: JSON.stringify({ is_live_music: isLive }) });
     load();
@@ -477,7 +1059,7 @@ ADMIN_HTML = """<!doctype html>
       clearTimeout(t);
       t = setTimeout(() => { state.search = e.target.value.trim(); load(); }, 300);
     });
-    load();
+    reload();
   });
 </script>
 </body></html>

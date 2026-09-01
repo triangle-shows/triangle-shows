@@ -7,6 +7,9 @@ stop-at-the-first-quote pattern terminated there, storing a truncated title with
 a trailing backslash. A fetch of the live calendar showed 61 of 625 titles
 carrying such an escape.
 
+Also covers the per-event `backgroundImage` key, which the extraction reads out
+of the same `{...}` block as the title/start/url it sits alongside.
+
 Run from the backend/ directory:  pytest tests/test_motorco.py
 The extraction is pure stdlib regex, so no DB, no network and no fixtures are
 needed — the scraper's own HTTP call is not exercised here.
@@ -87,3 +90,87 @@ def test_parse_event_leaves_a_plain_title_alone():
     )
     assert parsed is not None
     assert parsed.name == _PLAIN
+
+
+# --- The per-event poster ---
+# Each event object also carries a `backgroundImage` key holding the poster the
+# calendar tile paints behind the show. A fetch of the live calendar found it on
+# all 640 event objects on the page, but a WordPress admin can always post an
+# event with no featured image, so the absent case has to degrade rather than
+# drop the event.
+
+_POSTER = "https://motorcomusic.com/wp-content/uploads/2026/07/example.jpg"
+_OTHER_POSTER = "https://motorcomusic.com/wp-content/uploads/2026/07/other.jpg"
+
+
+def _event_object_with_poster(title: str, day: str, poster: str) -> str:
+    """One JS event object carrying `end` and `backgroundImage`, as the live page does."""
+    return (
+        "{"
+        f"title: '{title}',"
+        f"start: '{day} 20:00',"
+        f"end: '{day} 21:00',"
+        "url: 'https://motorcomusic.com/event/example/',"
+        "classNames: 'tcec-event-',"
+        f"backgroundImage: '{poster}'"
+        "}"
+    )
+
+
+def _future_day(offset: int = 45) -> str:
+    """The scraper drops past events, so fixtures must be anchored ahead of today."""
+    return (date.today() + timedelta(days=offset)).isoformat()
+
+
+def test_backgroundimage_becomes_the_event_image():
+    day = _future_day()
+    js = "events: [%s]," % _event_object_with_poster(_PLAIN, day, _POSTER)
+    events = _scraper()._extract_events(js, date.today())
+    assert len(events) == 1
+    assert events[0].image_url == _POSTER
+
+
+def test_an_event_object_without_backgroundimage_is_kept_with_no_image():
+    day = _future_day()
+    js = "events: [%s]," % _event_object(_PLAIN, day)
+    events = _scraper()._extract_events(js, date.today())
+    assert len(events) == 1
+    assert events[0].image_url is None
+
+
+def test_a_poster_is_never_borrowed_from_a_neighbouring_event_object():
+    """Each poster must come from its own `{...}` block, not the next one along."""
+    js = "events: [%s,%s]," % (
+        _event_object(_ESCAPED, _future_day(45)),
+        _event_object_with_poster(_PLAIN, _future_day(46), _POSTER),
+    )
+    events = _scraper()._extract_events(js, date.today())
+    by_name = {e.name: e for e in events}
+    assert by_name["Wednesday : It's Fine"].image_url is None
+    assert by_name[_PLAIN].image_url == _POSTER
+
+
+def test_each_event_keeps_its_own_poster_across_a_mixed_array():
+    js = "events: [%s,%s]," % (
+        _event_object_with_poster(_PLAIN, _future_day(45), _POSTER),
+        _event_object_with_poster(_ESCAPED, _future_day(46), _OTHER_POSTER),
+    )
+    events = _scraper()._extract_events(js, date.today())
+    by_name = {e.name: e for e in events}
+    assert by_name[_PLAIN].image_url == _POSTER
+    assert by_name["Wednesday : It's Fine"].image_url == _OTHER_POSTER
+
+
+def test_the_other_fields_survive_alongside_a_poster():
+    day = _future_day()
+    js = "events: [%s]," % _event_object_with_poster(_ESCAPED, day, _POSTER)
+    events = _scraper()._extract_events(js, date.today())
+    assert len(events) == 1
+    event = events[0]
+    assert event.name == "Wednesday : It's Fine"
+    assert event.artist == "Wednesday : It's Fine"
+    assert event.date.isoformat() == day
+    assert event.show_time is not None
+    assert (event.show_time.hour, event.show_time.minute) == (20, 0)
+    assert event.ticket_url == "https://motorcomusic.com/event/example/"
+    assert event.source_url == "https://motorcomusic.com/event/example/"
