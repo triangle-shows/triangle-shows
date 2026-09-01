@@ -11,8 +11,9 @@ main.py so these routes take priority over the catch-all.
 Requires: async PostgreSQL session, app.classifier, app.scrapers.manager, itsdangerous.
 """
 import logging
+import re
 import secrets
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
@@ -25,10 +26,12 @@ from sqlalchemy.orm import joinedload
 
 from app.config import settings
 from app.database import get_session
-from app.models import Event, Venue, SeriesOverride
+from app.models import Event, Venue, SeriesOverride, MANUAL_SCRAPER_TYPE
 from app.classifier import normalize_series_name, criteria_summary, reclassify_floor
 from app.duplicates import FoldError, build_clusters, validate_fold
-from app.scrapers.manager import ScrapeManager
+from app.scrapers.base import ScrapedEvent
+from app.scrapers.manager import ScrapeManager, event_from_scraped
+from app.venue_colors import is_valid_hex, pick_venue_color
 from app.admin_ui import LOGIN_HTML, ADMIN_HTML
 from app import tokens
 
@@ -690,6 +693,385 @@ async def unfold_duplicate(
     event.duplicate_of_id = None
     await session.commit()
     return {"ok": True, "id": event_id, "was_duplicate_of": was}
+
+
+# --- Manual event entry ---
+#
+# An admin creating rows by hand is the one write path where a mistake reaches the public
+# calendar directly, with no scraper in between to correct it on the next run. The
+# guardrails, and what each one stops:
+#
+#   * Every event is built as a ScrapedEvent first. That dataclass cleans the title and
+#     validates the ticket and image URLs, so a pasted title carrying HTML entities and a
+#     javascript: URL are handled by the code that already handles them from a venue site,
+#     rather than by a second implementation that has to remember to.
+#   * The hash therefore matches what a scraper would compute for the same show, so a venue
+#     that later lists it updates the admin's row instead of adding a twin.
+#   * A colliding hash is reported as "already on the calendar", naming the row it hit,
+#     instead of surfacing an IntegrityError as a 500.
+#   * Dates are bounded. Mistyping the year is the easiest error to make in a date field and
+#     the hardest to notice, because the row lands outside every view that would show it.
+#   * A manual venue's scraper_type is MANUAL_SCRAPER_TYPE, which scrape_all excludes — see
+#     app/models.py for why that one matters most.
+
+# Ten years back covers the archive; two forward covers any real announcement. Wider would
+# let 2062-for-2026 create a row nothing displays and nobody finds again.
+MANUAL_EVENT_MIN_DATE = date(2015, 1, 1)
+MANUAL_EVENT_MAX_YEARS_AHEAD = 2
+
+
+class ManualVenueBody(BaseModel):
+    """A venue nothing scrapes — a promoter, a festival, a one-off series."""
+
+    name: str
+    city: str
+    size_category: str = "small"
+    website: Optional[str] = None
+    color: Optional[str] = None  # omit to have one chosen
+
+
+class ManualEventBody(BaseModel):
+    venue_id: int
+    name: str
+    date: str  # ISO
+    artist: Optional[str] = None
+    support_artists: Optional[str] = None
+    doors_time: Optional[str] = None  # HH:MM
+    show_time: Optional[str] = None
+    ticket_url: Optional[str] = None
+    price_min: Optional[float] = None
+    price_max: Optional[float] = None
+    description: Optional[str] = None
+    genre: Optional[str] = None
+    age_restriction: Optional[str] = None
+    is_live_music: bool = True
+
+
+def _slugify(name: str) -> str:
+    """A URL-safe slug for a hand-created venue."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    return slug[:100]
+
+
+def _parse_time(value: Optional[str], field: str) -> Optional[time]:
+    """Parse 'HH:MM' (or 'HH:MM:SS'), or raise a 400 naming the field."""
+    if not value:
+        return None
+    try:
+        return time.fromisoformat(value)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail=f"{field} must look like 20:00, not {value!r}."
+        )
+
+
+async def _upcoming_counts(session: AsyncSession) -> dict[int, int]:
+    """Events per venue from today onward, excluding admin-flagged duplicates.
+
+    Mirrors the public read filters so the number matches what the calendar would show.
+    """
+    rows = await session.execute(
+        select(Event.venue_id, func.count())
+        .where(Event.date >= date.today(), Event.duplicate_of_id.is_(None))
+        .group_by(Event.venue_id)
+    )
+    return {venue_id: n for venue_id, n in rows.all()}
+
+
+@router.get("/api/venues", dependencies=[Depends(require_admin)])
+async def admin_venues(session: AsyncSession = Depends(get_session)) -> dict:
+    """Venues for the manual-add form, split by whether anything scrapes them.
+
+    Two groups, because they answer different questions. A scraped venue gets picked when a
+    real room is hosting something its own listings will not carry — a private show, a
+    festival stage. A promoter gets picked when there is no venue to speak of. One
+    alphabetical list would bury the second kind as soon as there are a few of them.
+    """
+    result = await session.execute(select(Venue).order_by(Venue.city, Venue.name))
+    venues = result.scalars().all()
+    counts = await _upcoming_counts(session)
+
+    def row(v: Venue) -> dict:
+        return {
+            "id": v.id,
+            "name": v.name,
+            "city": v.city,
+            "color": v.color,
+            "upcoming_event_count": counts.get(v.id, 0),
+        }
+
+    return {
+        "scraped": [row(v) for v in venues if v.scraper_type != MANUAL_SCRAPER_TYPE],
+        "manual": [row(v) for v in venues if v.scraper_type == MANUAL_SCRAPER_TYPE],
+    }
+
+
+@router.post("/api/venues", dependencies=[Depends(require_admin)])
+async def create_manual_venue(
+    body: ManualVenueBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Create a venue nothing scrapes, so hand-added events have somewhere to hang."""
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="A name is required.")
+    city = (body.city or "").strip()
+    if not city:
+        raise HTTPException(
+            status_code=400,
+            detail="A city is required — the public site groups and filters venues by it.",
+        )
+
+    slug = _slugify(name)
+    if not slug:
+        raise HTTPException(
+            status_code=400,
+            detail="That name has no letters or digits in it, so it cannot make a slug.",
+        )
+    clash = (
+        await session.execute(select(Venue).where(Venue.slug == slug))
+    ).scalar_one_or_none()
+    if clash:
+        raise HTTPException(
+            status_code=409,
+            detail=f'"{clash.name}" already uses that name. Pick another.',
+        )
+
+    if body.color:
+        if not is_valid_hex(body.color):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{body.color!r} is not a hex colour like #7fb069.",
+            )
+        color = body.color.strip().lower()
+    else:
+        # Chosen to sit in the widest unused part of the hue wheel, so a new promoter is
+        # distinguishable from every existing venue on a busy month. See app/venue_colors.py.
+        existing = (await session.execute(select(Venue.color))).scalars().all()
+        color = pick_venue_color(existing, name=name)
+
+    venue = Venue(
+        name=name,
+        slug=slug,
+        city=city,
+        size_category=(body.size_category or "small").strip() or "small",
+        website=(body.website or None),
+        scraper_type=MANUAL_SCRAPER_TYPE,
+        color=color,
+    )
+    session.add(venue)
+    await session.commit()
+    logger.info(f"[admin] created manual venue {slug!r} ({city}) with colour {color}")
+    return {
+        "ok": True,
+        "id": venue.id,
+        "name": venue.name,
+        "city": venue.city,
+        "color": venue.color,
+        "upcoming_event_count": 0,
+    }
+
+
+@router.post("/api/events", dependencies=[Depends(require_admin)])
+async def create_manual_event(
+    body: ManualEventBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Create one event by hand, at an existing venue."""
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="A name is required.")
+
+    venue = await session.get(Venue, body.venue_id)
+    if not venue:
+        raise HTTPException(status_code=404, detail="That venue does not exist.")
+
+    try:
+        on = date.fromisoformat((body.date or "")[:10])
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail=f"{body.date!r} is not a date like 2026-09-30."
+        )
+    latest = date(date.today().year + MANUAL_EVENT_MAX_YEARS_AHEAD, 12, 31)
+    if not (MANUAL_EVENT_MIN_DATE <= on <= latest):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{on.isoformat()} is outside {MANUAL_EVENT_MIN_DATE.year}-{latest.year}. "
+                "Check the year."
+            ),
+        )
+
+    if body.price_min is not None and body.price_min < 0:
+        raise HTTPException(status_code=400, detail="A price cannot be negative.")
+    if (
+        body.price_min is not None
+        and body.price_max is not None
+        and body.price_max < body.price_min
+    ):
+        raise HTTPException(
+            status_code=400, detail="The highest price is below the lowest."
+        )
+
+    # Through ScrapedEvent, so a hand-added event gets the same title cleaning, URL
+    # validation and dedup hash as a scraped one. An unusable ticket_url is dropped to None
+    # there rather than raising, which is the established behaviour for scraped data.
+    scraped = ScrapedEvent(
+        name=name,
+        date=on,
+        venue_slug=venue.slug,
+        source="manual",
+        artist=(body.artist or None),
+        support_artists=(body.support_artists or None),
+        doors_time=_parse_time(body.doors_time, "doors_time"),
+        show_time=_parse_time(body.show_time, "show_time"),
+        ticket_url=(body.ticket_url or None),
+        price_min=body.price_min,
+        price_max=body.price_max,
+        genre=(body.genre or None),
+        age_restriction=(body.age_restriction or None),
+        description=(body.description or None),
+    )
+
+    clash = (
+        await session.execute(select(Event).where(Event.hash == scraped.hash))
+    ).scalar_one_or_none()
+    if clash:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f'"{clash.name}" on {clash.date.isoformat()} is already on the calendar '
+                f"at this venue (event {clash.id})."
+            ),
+        )
+
+    event = event_from_scraped(scraped, venue.id)
+    # Both flags, because they mean different things and both are wanted here. #87 keeps
+    # them separate deliberately: is_manually_created records that a human *created the
+    # row*, and is what stops reconcile deleting it. is_manual_override records that a
+    # human set the *live-music verdict*, and is what stops reclassify_all overwriting it —
+    # without which an event added as "Comedy Showcase" would be auto-flagged non-live and
+    # vanish from the very calendar the admin added it to.
+    event.is_manually_created = True
+    event.is_live_music = body.is_live_music
+    event.is_manual_override = True
+    event.classification_reason = "manual"
+    event.approved_at = datetime.utcnow()  # adding it by hand *is* the review
+    session.add(event)
+    await session.commit()
+
+    logger.info(
+        f"[admin] created manual event {event.id} {name!r} at {venue.slug} on {on}"
+    )
+    return {
+        "ok": True,
+        "id": event.id,
+        "name": event.name,
+        "date": event.date.isoformat(),
+        "venue_name": venue.name,
+    }
+
+
+@router.delete("/api/events/{event_id}", dependencies=[Depends(require_admin)])
+async def delete_manual_event(
+    event_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Delete a hand-added event. Only a hand-added one.
+
+    Restricted to is_manually_created rows, and that restriction is the point rather than
+    caution. Deleting a *scraped* event is futile — the next run of that venue's scraper
+    puts it straight back — so a general delete button would look broken while quietly
+    being the one tool that can destroy an archive row. Hiding a scraped event is already
+    covered by marking it non-live or flagging it a duplicate.
+
+    Hard delete, not a flag. There is no audit value in retaining a typo, and a
+    soft-delete column would have to be honoured by every read path in the app for the
+    rest of its life to serve a mistyped title.
+
+    Hand-added rows are the ones with no other way out. reconcile deliberately will not
+    touch them (scraper_must_not_delete), and a hand-added event at a hand-added venue is
+    never even considered, because scrape_all skips that venue entirely. Everything that
+    protects them from the scraper is what makes this endpoint necessary.
+    """
+    event = await session.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if not event.is_manually_created:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only hand-added events can be deleted. A scraped event would come back on "
+                "the next scrape — mark it non-live, or flag it as a duplicate, to hide it."
+            ),
+        )
+
+    # Rows folded into this one become visible again, because duplicate_of_id is ON DELETE
+    # SET NULL. That is the behaviour migration 0006 chose deliberately — a row should not
+    # stay hidden on account of a row that no longer exists — but it means deleting a
+    # survivor can put listings back on the public calendar, so report how many.
+    restored = (await session.execute(
+        select(func.count()).select_from(Event).where(Event.duplicate_of_id == event_id)
+    )).scalar_one()
+
+    name, on = event.name, event.date.isoformat()
+    await session.delete(event)
+    await session.commit()
+    logger.info(f"[admin] deleted manual event {event_id} {name!r} on {on}")
+    return {"ok": True, "id": event_id, "name": name, "restored_duplicates": restored}
+
+
+@router.delete("/api/venues/{venue_id}", dependencies=[Depends(require_admin)])
+async def delete_manual_venue(
+    venue_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Delete a hand-added venue, but only once nothing is attached to it.
+
+    Two refusals, and each prevents silent data loss rather than merely being careful.
+
+    A seeded venue is never deletable. seed_venues() would recreate it on the next boot
+    with a new id, so the venue appears to come back — while its events are gone for good,
+    cascade-deleted through Venue.events. That is pure loss with no upside, and it would
+    look like the delete had simply not worked.
+
+    A venue with events is refused, and the count is reported. Venue.events cascades with
+    delete-orphan, so one click on a venue holding a run of shows would take all of them
+    with it, with nothing naming what was lost. Deleting the events first is one extra step
+    and makes the scope of the decision visible. `event_count` here is every event, not just
+    upcoming ones: a past event is still a row, and cascading it away silently is the thing
+    being prevented.
+    """
+    venue = await session.get(Venue, venue_id)
+    if not venue:
+        raise HTTPException(status_code=404, detail="Venue not found")
+    if venue.scraper_type != MANUAL_SCRAPER_TYPE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f'"{venue.name}" is a scraped venue, not one added by hand. Deleting it '
+                "would remove its events and it would reappear empty on the next restart."
+            ),
+        )
+
+    event_count = (await session.execute(
+        select(func.count()).select_from(Event).where(Event.venue_id == venue_id)
+    )).scalar_one()
+    if event_count:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f'"{venue.name}" still has {event_count} event'
+                f'{"" if event_count == 1 else "s"}. Delete those first — removing the '
+                "venue would take them with it."
+            ),
+        )
+
+    name = venue.name
+    await session.delete(venue)
+    await session.commit()
+    logger.info(f"[admin] deleted manual venue {venue_id} {name!r}")
+    return {"ok": True, "id": venue_id, "name": name}
 
 
 @router.get("/api/series", dependencies=[Depends(require_admin)])

@@ -17,6 +17,20 @@ import enum
 from app.database import Base
 
 
+# --- Constants ---
+
+# Venue.scraper_type for a venue nothing scrapes: a promoter, a festival, a one-off series
+# an admin created by hand so that events can hang off something.
+#
+# A string in an existing column rather than a new boolean, so this needed no migration —
+# but it is load-bearing in two places and must not be spelled inline in either.
+# ScrapeManager.scrape_all() excludes these venues, without which each one would write a
+# failed ScrapeLog on every cycle (there is deliberately no scraper for them), and
+# app.api.venues hides them from the public venue list while they have no upcoming events,
+# so an empty promoter is not offered as a filter.
+MANUAL_SCRAPER_TYPE = "manual"
+
+
 # --- Enums ---
 
 class EventStatus(str, enum.Enum):
