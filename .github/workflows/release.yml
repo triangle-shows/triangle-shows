@@ -1,0 +1,87 @@
+name: Tag release
+
+# Tags every promotion and lets GitHub write the release notes.
+#
+# A promotion is a single PR carrying every commit merged to `main` since the last one — 29
+# across 10 PRs the first time this was needed. Until now the only record of what shipped was
+# a merge commit on `prod`, so answering "when did X go live" meant reading commit ranges by
+# hand, and /api/health reported a bare SHA.
+#
+# The notes are GitHub's own (`--generate-notes`), not hand-rolled: it lists one line per
+# merged PR with author and link, supports label-based categories via .github/release.yml,
+# and adds a "New Contributors" section. An earlier attempt reimplemented that and was
+# strictly worse.
+#
+# Known gap, accepted: generated notes cover *pull requests*. A commit pushed straight to a
+# branch is omitted, and `main` has no `pull_request` ruleset, so that is permitted. Zero
+# occurrences so far. Revisit only if one ever goes unnoticed.
+on:
+  push:
+    branches: [prod]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # create the tag and the release
+
+# Two promotions landing close together would otherwise race on the same date-based name and
+# could both resolve to the same tag before either created it.
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag and release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Already tagged — a re-run of this workflow on the same commit must not mint a
+          # second release for a deploy that happened once.
+          EXISTING=$(gh api "repos/$REPO/git/matching-refs/tags" \
+            --jq "[.[] | select(.object.sha == \"$SHA\")] | first | .ref // empty")
+          if [ -n "$EXISTING" ]; then
+            echo "$SHA is already tagged as ${EXISTING#refs/tags/} — nothing to do."
+            exit 0
+          fi
+
+          # Date-based, in the timezone the scrapers and the maintainer work in, so the tag
+          # matches the day the deploy is remembered happening rather than a UTC rollover.
+          DATE=$(TZ=America/New_York date +%Y.%m.%d)
+          TAG="$DATE"
+          N=2
+          while gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; do
+            # Second promotion of the day reads as ".2", which is what it is. The first keeps
+            # the bare date, so the common case stays clean.
+            TAG="$DATE.$N"
+            N=$((N + 1))
+          done
+
+          # Scope the notes to everything since the previous release. Absent on the very
+          # first run, where GitHub walks back to the start of history — correct for a
+          # first release, and long exactly once.
+          PREV=$(gh release list --repo "$REPO" --limit 1 --json tagName --jq '.[0].tagName // ""')
+          if [ -n "$PREV" ]; then
+            echo "Releasing $TAG, with notes since $PREV"
+            gh release create "$TAG" --repo "$REPO" --target "$SHA" \
+              --title "$TAG" --generate-notes --notes-start-tag "$PREV"
+          else
+            echo "Releasing $TAG (first release — notes cover all history)"
+            gh release create "$TAG" --repo "$REPO" --target "$SHA" \
+              --title "$TAG" --generate-notes
+          fi
+
+          {
+            echo "### Released \`$TAG\`"
+            echo ""
+            echo "- commit: \`${SHA:0:8}\`"
+            echo "- notes since: \`${PREV:-beginning of history}\`"
+            echo "- <https://github.com/$REPO/releases/tag/$TAG>"
+          } >> "$GITHUB_STEP_SUMMARY"
