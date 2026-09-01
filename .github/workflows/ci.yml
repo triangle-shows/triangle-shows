@@ -11,6 +11,43 @@ on:
   pull_request:
 
 jobs:
+  frontend-tests:
+    name: Frontend unit tests
+    runs-on: ubuntu-latest
+
+    # A separate job rather than a step in smoke-test below. These tests need neither
+    # Postgres nor Python, so folding them in would make them queue behind a database
+    # container and a pip install for no reason, and a failure would report under a name
+    # ("Migrations + API smoke test") that says nothing about what broke. As their own
+    # job they run in parallel, so total wall-clock does not grow.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          # No cache: key, and no `npm ci` step, because there is no package.json. The
+          # tests import only node:test, node:assert, node:fs, node:path and node:vm —
+          # all built in. Keeping them dependency-free is deliberate (see the header of
+          # frontend/tests/favorites.test.js), so there is nothing to install or cache.
+
+      - name: Run frontend unit tests
+        run: |
+          # `node --test <dir>` exits 0 when it matches no files. So renaming this
+          # directory, or renaming a file off the *.test.js pattern, would leave this job
+          # green having executed nothing — which is the same silent-gap failure this job
+          # exists to close: the tests added in #74 and #75 sat unrun for weeks because
+          # CI was Python-only, and nothing reported their absence. Assert discovery
+          # explicitly so that gap cannot reopen quietly.
+          shopt -s nullglob
+          files=(frontend/tests/*.test.js)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::No test files matched frontend/tests/*.test.js — the tests were not run."
+            exit 1
+          fi
+          echo "Discovered ${#files[@]} test file(s): ${files[*]}"
+          node --test --test-reporter=spec frontend/tests/
+
   smoke-test:
     name: Migrations + API smoke test
     runs-on: ubuntu-latest

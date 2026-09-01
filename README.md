@@ -56,6 +56,34 @@ See [SELF-HOSTING.md](docs/SELF-HOSTING.md) for setup instructions.
 
 ---
 
+## Running the tests
+
+Two suites, and CI runs both on every pull request.
+
+**Backend** — pytest, from `backend/`:
+
+```bash
+python -m pytest tests -q
+```
+
+A handful of migration tests need a reachable PostgreSQL server and skip cleanly without
+one, so a local run with no database still passes. CI stands up a Postgres service
+container, so they do run there.
+
+**Frontend** — Node's built-in test runner, from the repo root:
+
+```bash
+node --test frontend/tests/
+```
+
+No `package.json`, no `npm install`, no dependencies: these use only `node:test`,
+`node:assert`, `node:fs`, `node:path` and `node:vm`. Requires Node 18 or newer. Keeping
+them dependency-free is deliberate — a browser-less runner that needs no toolchain is
+what makes it reasonable to test plain `<script>` files at all, by evaluating them in a
+`vm` context with only the globals they actually touch.
+
+---
+
 ## Project structure
 
 ```
@@ -78,6 +106,7 @@ frontend/
     config.js       # Color palettes, API base URL, site config
     modal.js        # Event detail modal
     favorites.js    # Heart, hide, restore, and export logic
+  tests/            # Node built-in test runner, no dependencies
 tools/              # Dev utilities (see below)
   mockups/          # Static HTML design explorations
 docs/               # Architecture and self-hosting guides
