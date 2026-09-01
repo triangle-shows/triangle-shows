@@ -364,3 +364,68 @@ class TestAdminUiWiring:
         Throwing a bare 'http 400' would discard exactly the part the admin needs."""
         assert "err.detail" in script
         assert "detail = (await r.json()).detail" in script
+
+
+class TestReaderFacingVocabulary:
+    """The words the admin actually sees.
+
+    The first version of this UI said "folded into 41", "unfold", and "keep this one
+    (folds 2)". Two problems. "Fold" is jargon — the help text had a paragraph whose only
+    job was to define it — and worse, it is *inaccurate*: folding implies the two rows are
+    combined, when nothing is combined. The row is hidden and given a pointer, and the
+    survivor is untouched. And "duplicate of 41" names a row by an id, which is not
+    something a person can recognise.
+
+    Internal names (`unfold()`, `foldAction`, the `/unfold` route) deliberately keep the
+    old term: they are read by us, and `absorb` in particular is accurate about direction.
+    This class only polices what renders.
+    """
+
+    @pytest.fixture(scope="class")
+    def html(self) -> str:
+        from app.admin_ui import ADMIN_HTML
+
+        return ADMIN_HTML
+
+    @pytest.fixture(scope="class")
+    def visible(self, html) -> str:
+        """The page with the <script> block removed — help text, buttons, headings."""
+        import re
+
+        script = re.search(r"<script>(.*?)</script>", html, re.S)
+        return html.replace(script.group(1), "") if script else html
+
+    def test_no_fold_jargon_in_the_visible_page(self, visible):
+        import re
+
+        found = re.findall(r"[Ff]old\w*", visible)
+        assert not found, f"reader-facing fold jargon is back: {sorted(set(found))}"
+
+    def test_the_help_text_explains_hiding_without_defining_a_metaphor(self, visible):
+        assert "hides, it doesn't delete" in visible
+        assert "hidden as a duplicate of it" in visible
+
+    def test_the_button_says_what_clicking_it_asserts(self, html):
+        assert "not a duplicate" in html
+
+    def test_the_badge_names_the_surviving_listing_not_its_id(self, html):
+        """`duplicate of "Sub Rosa"` rather than `duplicate of 41`."""
+        assert "duplicate_of_name" in html
+        assert 'duplicate of \'' not in html, "the id-based badge wording is back"
+
+    def test_the_badge_falls_back_when_the_name_is_missing(self, html):
+        """The survivor can vanish between the two queries that build the page, and a badge
+        reading `duplicate of "undefined"` is worse than one that omits the name."""
+        assert "hidden as a duplicate" in html
+
+    def test_the_survivor_name_is_supplied_by_both_endpoints(self):
+        """The badge is only as good as the payload. Both the moderation list and the
+        duplicate queue have to send it, and they build their rows separately."""
+        import inspect
+
+        from app.api import admin
+
+        for fn in (admin.admin_events, admin.list_duplicate_candidates):
+            assert "duplicate_of_name" in inspect.getsource(fn), (
+                f"{fn.__name__} does not send the surviving listing's name"
+            )

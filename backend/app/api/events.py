@@ -18,6 +18,7 @@ from sqlalchemy.orm import joinedload
 
 from app.database import get_session
 from app.models import Event, Venue
+from app.timefmt import format_time_12h
 from app.schemas import EventResponse, FullCalendarEvent, EventListResponse
 
 # --- Router setup ---
@@ -212,8 +213,8 @@ async def get_fullcalendar_events(
                 "venue_color": color,
                 "date": event.date.isoformat(),
                 # Strip leading zero from hour for display (e.g. "9:00 PM" not "09:00 PM").
-                "doors_time": event.doors_time.strftime("%I:%M %p").lstrip("0") if event.doors_time else None,
-                "show_time": event.show_time.strftime("%I:%M %p").lstrip("0") if event.show_time else None,
+                "doors_time": format_time_12h(event.doors_time),
+                "show_time": format_time_12h(event.show_time),
                 "ticket_url": event.ticket_url,
                 "price": price_str,
                 "price_min": event.price_min,

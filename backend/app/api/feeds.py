@@ -23,6 +23,7 @@ from sqlalchemy.orm import joinedload
 # --- Internal imports ---
 from app.database import get_session
 from app.models import Event, Venue
+from app.timefmt import format_time_12h
 
 # --- Router setup ---
 router = APIRouter(prefix="/feeds", tags=["feeds"])
@@ -124,9 +125,9 @@ async def get_ical_feed(
         if event.support_artists:
             desc_parts.append(f"w/ {event.support_artists}")
         if event.doors_time:
-            desc_parts.append(f"Doors: {event.doors_time.strftime('%-I:%M %p')}")
+            desc_parts.append(f"Doors: {format_time_12h(event.doors_time)}")
         if event.show_time:
-            desc_parts.append(f"Show: {event.show_time.strftime('%-I:%M %p')}")
+            desc_parts.append(f"Show: {format_time_12h(event.show_time)}")
         if event.price_min is not None:
             if event.price_min == 0:
                 desc_parts.append("Free")

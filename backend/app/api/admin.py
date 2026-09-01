@@ -227,6 +227,21 @@ async def admin_rules() -> dict:
     return criteria_summary()
 
 
+async def _survivor_names(
+    session: AsyncSession, ids: list[Optional[int]]
+) -> dict[int, str]:
+    """Map event id to name, for the non-null ids in `ids`.
+
+    Shared by the moderation list and the duplicate queue so both label a hidden row with
+    the surviving listing's name rather than its id.
+    """
+    wanted = {i for i in ids if i is not None}
+    if not wanted:
+        return {}
+    rows = await session.execute(select(Event.id, Event.name).where(Event.id.in_(wanted)))
+    return {event_id: name for event_id, name in rows.all()}
+
+
 @router.get("/api/events", dependencies=[Depends(require_admin)])
 async def admin_events(
     filter: str = Query("non_live", pattern="^(non_live|live|all)$"),
@@ -306,9 +321,9 @@ async def admin_events(
         key = (venue_id, normalize_series_name(name))
         series_sizes[key] = series_sizes.get(key, 0) + 1
 
-    # How many rows are folded into each event on this page, so a survivor can say
-    # "2 hidden duplicates" instead of the folded rows simply being absent. Scoped to the
-    # ids actually shown rather than counting the whole table.
+    # How many hidden duplicates each event on this page has, so a surviving row can say
+    # so instead of the hidden rows simply being absent. Scoped to the ids actually shown
+    # rather than counting the whole table.
     fold_counts: dict[int, int] = {}
     if events:
         fold_rows = await session.execute(
@@ -317,6 +332,14 @@ async def admin_events(
             .group_by(Event.duplicate_of_id)
         )
         fold_counts = {target: n for target, n in fold_rows.all()}
+
+    # The surviving row's *name*, for rows that are themselves hidden. The badge has to
+    # read "duplicate of Sub Rosa" rather than "duplicate of 41": an event id is not
+    # something an admin can recognise, and the whole point of the badge is to say which
+    # listing won. The survivor may not be on this page — it can be filtered out, or on
+    # another date entirely after a cross-date fold — so it is looked up rather than
+    # resolved from the rows already loaded.
+    survivor_names = await _survivor_names(session, [e.duplicate_of_id for e in events])
 
     out = []
     for e in events:
@@ -334,10 +357,11 @@ async def admin_events(
             "classification_reason": e.classification_reason,
             "is_approved": e.approved_at is not None,
             "is_manually_created": e.is_manually_created,
-            # Duplicate state (#63). A folded row stays visible here — it is only hidden
+            # Duplicate state (#63). A hidden row stays visible here — it is only hidden
             # from the public calendar — so the admin can see what was suppressed and undo
             # it, which is the entire reason duplicate_of_id is a pointer and not a delete.
             "duplicate_of_id": e.duplicate_of_id,
+            "duplicate_of_name": survivor_names.get(e.duplicate_of_id),
             "hidden_duplicate_count": fold_counts.get(e.id, 0),
             # Detail shown when a row is expanded, to judge live-vs-not by hand.
             # Descriptions are sparse (~10% of events), so the ticket link is often
@@ -528,6 +552,13 @@ async def list_duplicate_candidates(
     clusters = build_clusters(list(rows))
     total = len(clusters)
 
+    # A hidden row's survivor is usually inside the same cluster, but not after a
+    # cross-date or cross-venue fold, so resolve names rather than reading them off the
+    # members already loaded.
+    survivor_names = await _survivor_names(
+        session, [m.duplicate_of_id for c in clusters for m in c["members"]]
+    )
+
     out = []
     for cluster in clusters[:limit]:
         members = cluster["members"]
@@ -553,6 +584,7 @@ async def list_duplicate_candidates(
                 "is_manually_created": m.is_manually_created,
                 "is_approved": m.approved_at is not None,
                 "duplicate_of_id": m.duplicate_of_id,
+                "duplicate_of_name": survivor_names.get(m.duplicate_of_id),
             } for m in members],
         })
 
@@ -646,7 +678,10 @@ async def unfold_duplicate(
     event_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Clear `event_id`'s duplicate flag, returning it to the public calendar."""
+    """Clear `event_id`'s duplicate flag, returning it to the public calendar.
+
+    Reached from the admin's "not a duplicate" control.
+    """
     event = await session.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")

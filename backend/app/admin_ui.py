@@ -133,7 +133,12 @@ ADMIN_HTML = """<!doctype html>
            border-radius:2px; font-size:0.72rem; margin-top:1rem; color:#b8b6b3; }
   .hidden { display:none; }
   /* --- Duplicate review (#63) --- */
-  .b.dupe { background:#3d2033; color:#e08ac8; }
+  /* text-transform:none, unlike every other badge. This is the only badge whose text
+     contains user data — the surviving listing's name — and act names are often
+     deliberately cased ("MF DOOM", "girl in red", "SOPHIE"). Uppercasing them throws that
+     away and reads as shouting. The badge keeps its pill and colour, so the inconsistency
+     is a casing difference in exchange for not mangling a band's name. */
+  .b.dupe { background:#3d2033; color:#e08ac8; text-transform:none; }
   /* One card per candidate cluster. A card rather than more table rows because the unit
      of decision is the cluster, not the row: the admin picks a winner from a small set,
      and a bordered group makes the boundary of that choice unambiguous. */
@@ -154,10 +159,10 @@ ADMIN_HTML = """<!doctype html>
   .crow button.keep { border-color:#2f5c40; color:#7fd69a; }
   .crow button.keep:hover { background:#1f3d2a; }
   .crow button:hover { border-color:var(--accent); color:var(--accent); }
-  /* A folded row is indented under the cluster and dimmed, so "hidden from the public
+  /* A hidden row is indented under the cluster and dimmed, so "hidden from the public
      calendar" reads visually rather than needing the badge to be parsed. */
-  .crow.folded { padding-left:1.7rem; border-left:2px solid #3d2033; background:#121215; }
-  .crow.folded .ct { color:#8a8a8e; }
+  .crow.hiddenrow { padding-left:1.7rem; border-left:2px solid #3d2033; background:#121215; }
+  .crow.hiddenrow .ct { color:#8a8a8e; }
   #dupes .empty { border:1px solid #2a2a2e; border-radius:2px; background:#141417; }
   #err { color:#e0625f; font-size:0.75rem; margin:0 0 0.7rem; min-height:1em; }
 </style>
@@ -244,16 +249,20 @@ ADMIN_HTML = """<!doctype html>
       <p><b>Two different shows on one night is normal</b> — an early and a late set, a
       support show in the back room. Those will appear here and you should leave them. The
       list isn't a to-do list you can empty; it's the set of nights worth a glance.</p>
-      <p><b>keep this one</b> is pressed on the listing you want to survive; everything else
-      on that night folds into it. You press the row you're keeping, not the ones you're
-      hiding, so there's no way to get the direction backwards.</p>
-      <p>Folding <b>hides, it doesn't delete</b>. The row stays in the database pointing at
-      the one you kept, disappears from the public calendar and the subscription feed, and
-      can be brought back with <b>unfold</b> — here, or from the review queue where it shows
-      a pink badge. If you later delete the listing you kept, anything folded into it comes
-      back automatically rather than staying hidden behind a row that no longer exists.</p>
-      <p>The scraper won't undo your decision either: a folded row is protected from the
-      pass that deletes listings a venue has stopped advertising.</p>
+      <p><b>keep this one</b> is pressed on the listing you want to survive; every other
+      listing on that night is then hidden as a duplicate of it. You press the row you're
+      keeping, not the ones you're hiding, so there's no way to get the direction
+      backwards.</p>
+      <p>This <b>hides, it doesn't delete</b>. The hidden row stays in the database,
+      recorded as a duplicate of the one you kept. It disappears from the public calendar
+      and the subscription feed, but stays visible to you — here, and in the review queue
+      with a pink <b>duplicate of "…"</b> badge naming the listing that won. <b>not a
+      duplicate</b> brings it straight back.</p>
+      <p>Nothing else can strand it, either. If you later delete the listing you kept, the
+      hidden ones reappear on the calendar by themselves rather than staying hidden behind
+      a row that no longer exists. And the scraper won't undo your decision: a row you've
+      hidden is protected from the pass that deletes listings a venue has stopped
+      advertising.</p>
     </div>
     <table id="queueTable">
       <thead><tr><th>date</th><th>event</th><th>status</th><th>actions</th></tr></thead>
@@ -292,14 +301,23 @@ ADMIN_HTML = """<!doctype html>
   }
 
   function badge(ev) {
-    // The duplicate badge leads. A folded row is hidden from the public calendar
-    // whatever its live-music verdict says, so showing the verdict first would describe
-    // a row by a flag that currently has no effect.
+    // The duplicate badge leads. A hidden row is out of the public calendar whatever its
+    // live-music verdict says, so showing the verdict first would describe a row by a flag
+    // that currently has no effect.
+    //
+    // Named, not numbered: "duplicate of Sub Rosa" is something an admin can recognise;
+    // "duplicate of 41" is not. The name can be missing if the survivor was deleted
+    // between the two queries, so fall back rather than printing "undefined".
     let dupe = '';
     if (ev.duplicate_of_id) {
-      dupe = '<span class="b dupe">duplicate of ' + ev.duplicate_of_id + '</span> ';
+      const of = ev.duplicate_of_name
+        ? 'duplicate of "' + esc(ev.duplicate_of_name) + '"'
+        : 'hidden as a duplicate';
+      dupe = '<span class="b dupe">' + of + '</span> ';
     } else if (ev.hidden_duplicate_count) {
-      dupe = '<span class="b dupe">' + ev.hidden_duplicate_count + ' folded in</span> ';
+      const n = ev.hidden_duplicate_count;
+      dupe = '<span class="b dupe">' + n + ' hidden duplicate' + (n === 1 ? '' : 's') +
+             '</span> ';
     }
     if (ev.is_manual_override)
       return dupe + '<span class="b manual">manual: ' + (ev.is_live_music ? 'live' : 'non-live') + '</span>';
@@ -318,11 +336,16 @@ ADMIN_HTML = """<!doctype html>
   }
 
   function actions(ev) {
-    // A folded row gets one action and no others. Its classification is moot while it is
+    // A hidden row gets one action and no others. Its classification is moot while it is
     // hidden, and offering "mark live" on a row nobody can see invites the admin to spend
     // a decision on something with no effect.
+    //
+    // "not a duplicate" says what clicking it asserts. "unfold" only meant anything to a
+    // reader who already knew the folding metaphor — and that metaphor was wrong anyway:
+    // it implies the two rows were combined, when nothing is combined and the row is only
+    // hidden with a pointer to the survivor.
     if (ev.duplicate_of_id) {
-      return '<button onclick="unfold(' + ev.id + ')">unfold</button>';
+      return '<button onclick="unfold(' + ev.id + ')">not a duplicate</button>';
     }
     let a = approveAction(ev, false, 1) + ' ';
     if (ev.is_manual_override) {
@@ -502,19 +525,23 @@ ADMIN_HTML = """<!doctype html>
 
   function clusterRow(ev, survivors) {
     if (ev.duplicate_of_id) {
-      return '<div class="crow folded">' +
+      const of = ev.duplicate_of_name
+        ? 'duplicate of "' + esc(ev.duplicate_of_name) + '"'
+        : 'hidden as a duplicate';
+      return '<div class="crow hiddenrow">' +
         '<span class="ct">' + esc(ev.name) + '</span>' + timeLabel(ev) +
-        '<span class="b dupe">folded into ' + ev.duplicate_of_id + '</span>' +
-        '<button onclick="unfold(' + ev.id + ')">unfold</button></div>';
+        '<span class="b dupe">' + of + '</span>' +
+        '<button onclick="unfold(' + ev.id + ')">not a duplicate</button></div>';
     }
-    // "keep this one" acts on the row the admin wants to survive, and folds every other
-    // unfolded row in the cluster into it. Acting on the winner rather than the loser is
+    // "keep this one" acts on the row the admin wants to survive, and hides every other
+    // visible row in the cluster as a duplicate of it. Acting on the winner rather than
+    // the loser is
     // deliberate: a "mark as duplicate" button sits on the row that loses and forces the
     // admin to reason about the other row while clicking this one, which is how the wrong
     // row gets hidden.
     const others = survivors.filter((s) => s !== ev.id);
     const n = others.length;
-    const label = n === 1 ? 'keep this one' : 'keep this one (folds ' + n + ')';
+    const label = n === 1 ? 'keep this one' : 'keep this one (hides ' + n + ')';
     return '<div class="crow">' +
       '<span class="ct">' + esc(ev.name) + '</span>' + timeLabel(ev) +
       (ev.is_manually_created ? '<span class="b manual">hand-added</span>' : '') +
@@ -581,7 +608,7 @@ ADMIN_HTML = """<!doctype html>
     const n = duplicateIds.length;
     if (!confirm('Hide ' + n + ' other listing' + (n === 1 ? '' : 's') +
                  ' on this night, keeping the one you chose?\\n\\n' +
-                 'They stay in the database and can be unfolded here at any time.')) return;
+                 'They stay in the database, and you can restore any of them here at any time.')) return;
     await foldAction(() => api('/admin/api/events/' + survivorId + '/absorb',
               { method: 'POST', body: JSON.stringify({ duplicate_ids: duplicateIds }) }));
   }
