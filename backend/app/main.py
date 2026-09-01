@@ -81,6 +81,13 @@ def configure_logging() -> None:
     bet — if a future dependency installs a handler lazily, call this again once it has.
     """
     logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL), format=LOG_FORMAT)
+    # basicConfig is a no-op once root has a handler, so on any call after the first it
+    # sets neither handler nor level. The level has to be asserted separately for a repeat
+    # call to mean anything: applying migrations in-process runs alembic.ini through
+    # fileConfig, which pins [logger_root] to WARN, and app.* loggers inherit from root.
+    # Without this line a post-migration configure_logging() leaves every INFO line
+    # suppressed while looking like it had restored things.
+    logging.getLogger().setLevel(getattr(logging, settings.LOG_LEVEL))
 
     # Snapshot the registry before walking it. loggerDict is the live dict that
     # logging.getLogger() inserts into, and the filter below runs Python between
@@ -151,6 +158,13 @@ async def lifespan(app: FastAPI):
 
     # Apply any pending Alembic migrations — creates tables on fresh DBs, updates schema on existing ones
     await asyncio.to_thread(_run_migrations)
+    # Re-apply logging after migrations. alembic/env.py declines to reconfigure logging
+    # when the app has already done so, but Alembic is exactly the "dependency that
+    # installs a handler lazily" this function's own docstring warns about, and calling it
+    # again is the remedy it prescribes. Idempotent (the redaction wrap never nests), and
+    # it means log visibility and credential redaction do not both hinge on that single
+    # check in env.py staying correct.
+    configure_logging()
     logger.info("Migrations applied")
 
     # Seed venues
