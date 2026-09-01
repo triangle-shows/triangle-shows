@@ -144,10 +144,22 @@ def plan_upsert(existing: list[Any], scraped_events: list[ScrapedEvent], today: 
             plan.inserts.append(se)
             continue
 
-        # Prefer the row whose title already matches what the source says now; fall back
-        # to the most recently seen row. Both keys are total, so the choice is stable.
+        # Prefer a hand-added row above all else, then the row whose title already matches
+        # what the source says now, then the most recently seen row. Every key is total,
+        # so the choice is stable.
+        #
+        # The manual key leads because the loser of this sort is `superseded`, and
+        # superseded rows are deleted. Without it, a venue that later lists a show an
+        # admin had already added by hand could discard the admin's row and keep the
+        # scraped one — the orphan guard below would never see it, because a superseded
+        # row is claimed. Ranking manual first means the curated row survives and
+        # _apply_scraped enriches it with the scraped detail instead.
         unique.sort(
-            key=lambda r: (r.hash == se.hash, r.updated_at or datetime.min),
+            key=lambda r: (
+                getattr(r, "is_manually_created", False),
+                r.hash == se.hash,
+                r.updated_at or datetime.min,
+            ),
             reverse=True,
         )
         keep, rest = unique[0], unique[1:]
@@ -164,7 +176,18 @@ def plan_upsert(existing: list[Any], scraped_events: list[ScrapedEvent], today: 
     # own listings as soon as they happen.
     horizon = max(se.date for se in scraped_events)
     in_window = [r for r in existing if today <= r.date <= horizon]
-    orphans = [r for r in in_window if r.id not in claimed]
+    # Hand-added rows are never candidates for deletion. A scraper by definition does not
+    # return them, so without this every manually created event at a scraped venue would
+    # be orphaned and deleted on the next run.
+    #
+    # The flag, not `source`: _apply_scraped() writes `row.source = se.source` whenever a
+    # scraped event matches a stored row, so a source-based filter would silently stop
+    # protecting a row the first time the venue listed the same show. getattr keeps the
+    # stand-in rows in tests/test_dedup.py working without every one declaring the field.
+    orphans = [
+        r for r in in_window
+        if r.id not in claimed and not getattr(r, "is_manually_created", False)
+    ]
 
     if orphans:
         too_lossy = (

@@ -99,6 +99,18 @@ class Event(Base):
     # manually overridden (is_manual_override=True), which are left untouched.
     is_live_music: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     is_manual_override: Mapped[bool] = mapped_column(Boolean, default=False)  # True once an admin sets the flag by hand
+    # True when an admin created this row by hand rather than a scraper finding it.
+    #
+    # Distinct from is_manual_override above, which records a hand-set live-music
+    # *verdict*. A row can be manually created and auto-classified, or scraped and
+    # manually overridden; conflating the two makes either signal unreadable.
+    #
+    # Load-bearing for reconcile: plan_upsert() deletes any row inside the scraped date
+    # window that the scrape did not return, and a hand-added event never is. Nothing in
+    # the scraper path writes this flag — deliberately, because _apply_scraped() does
+    # write `source`, so filtering orphans on source would lose the protection the first
+    # time a venue listed a show that had already been added by hand.
+    is_manually_created: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     classification_reason: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # human-readable why, e.g. "recurring: 6 dates", "keyword: trivia", "manual"
     # Set when an admin confirms the current classification is correct; the admin list
     # hides approved events by default. Records agreement with a *verdict*, not the

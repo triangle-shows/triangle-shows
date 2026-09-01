@@ -37,6 +37,9 @@ class Row:
     hash: str
     external_id: Optional[str] = None
     updated_at: Optional[datetime] = None
+    # Defaults to False so every existing construction site keeps working; only the
+    # manual-event tests below set it.
+    is_manually_created: bool = False
 
 
 def scraped(name: str, on: date = TODAY, external_id: Optional[str] = None) -> ScrapedEvent:
@@ -321,3 +324,109 @@ class TestReconcile:
         assert plan.superseded == []
         assert plan.inserts == []
         assert plan.updates == []
+
+
+# --- Manually created events survive reconcile ---------------------------------------
+#
+# plan_upsert deletes any row inside the scraped window that the scrape did not return.
+# A hand-added event never is returned, so without a guard every manual event at a
+# scraped venue would be deleted on the next run.
+#
+# The guard reads events.is_manually_created rather than filtering on `source`, and the
+# distinction is the point of test_survives_after_a_scrape_has_matched_it below: a
+# source-based filter passes the obvious test and then fails silently in production the
+# first time a venue lists a show that had already been added by hand, because
+# _apply_scraped writes `row.source = se.source` on a match.
+
+
+def manual_row(id: int, on: date = TODAY, name: str = "Hand-Added Benefit Show") -> Row:
+    """A row an admin created. Its hash intentionally matches nothing a scraper produces."""
+    return Row(
+        id=id,
+        date=on,
+        hash=f"manual-{id}",
+        external_id=None,
+        updated_at=datetime(2026, 8, 30),
+        is_manually_created=True,
+    )
+
+
+class TestManualEventsSurviveReconcile:
+    def test_not_orphaned_when_the_scrape_does_not_mention_it(self):
+        """The core case: a scrape of the same venue returns other shows, not this one."""
+        manual = manual_row(1)
+        other = scraped("Some Touring Band", on=TODAY + timedelta(days=2))
+
+        plan = plan_upsert([manual, row_for(other, id=2)], [other], TODAY)
+
+        assert manual not in plan.expired
+        assert manual not in plan.superseded
+        assert plan.expired == []
+
+    def test_a_scraped_row_beside_it_is_still_reconciled(self):
+        """The guard must protect manual rows without disabling reconcile generally."""
+        manual = manual_row(1)
+        dropped = row_for(scraped("Cancelled Show"), id=2)
+        still_listed = scraped("Some Touring Band", on=TODAY + timedelta(days=2))
+
+        plan = plan_upsert(
+            [manual, dropped, row_for(still_listed, id=3)], [still_listed], TODAY
+        )
+
+        assert dropped in plan.expired, "an ordinary dropped listing should still expire"
+        assert manual not in plan.expired
+
+    def test_survives_after_a_scrape_has_matched_it(self):
+        """The case a `source != "manual"` filter would fail.
+
+        Sequence: a venue starts listing a show an admin had already added by hand, so the
+        scrape matches the manual row and _apply_scraped copies the scraper's `source`
+        onto it. The venue then drops the listing again. A source-based guard would have
+        been stripped by the match and would delete the row here; the flag survives,
+        because nothing in the scraper path writes it.
+        """
+        listed = scraped("Hand-Added Benefit Show")
+        manual = manual_row(1)
+        manual.hash = listed.hash  # the match that overwrites `source` in production
+
+        # Run 1: the venue lists it. The manual row is matched, not deleted.
+        first = plan_upsert([manual], [listed], TODAY)
+        assert first.expired == []
+        assert [row for _, row in first.updates] == [manual]
+
+        # Run 2: the venue drops it again. The flag is untouched by run 1, so it holds.
+        other = scraped("Unrelated Show", on=TODAY + timedelta(days=3))
+        second = plan_upsert([manual, row_for(other, id=2)], [other], TODAY)
+        assert second.expired == [], "manual row deleted after having been matched once"
+
+    def test_preferred_over_a_scraped_duplicate_of_the_same_show(self):
+        """When one scraped event matches both a manual row and a scraped row, the manual
+        row must be the survivor — the loser is superseded, and superseded rows are
+        deleted."""
+        listed = scraped("Hand-Added Benefit Show")
+        manual = manual_row(1)
+        manual.external_id = "abc"
+        listed_with_id = scraped("Hand-Added Benefit Show", external_id="abc")
+        manual.hash = "manual-1"  # title differs, so only external_id matches
+        scraped_dupe = Row(
+            id=2,
+            date=listed.date,
+            hash=listed_with_id.hash,  # exact title match, would otherwise win the sort
+            external_id="abc",
+            updated_at=datetime(2026, 8, 31),  # and it is fresher
+        )
+
+        plan = plan_upsert([manual, scraped_dupe], [listed_with_id], TODAY)
+
+        kept = [row for _, row in plan.updates]
+        assert kept == [manual], "the hand-added row should be kept, not the scraped one"
+        assert plan.superseded == [scraped_dupe]
+
+    def test_manual_row_outside_the_window_is_untouched_as_before(self):
+        """Sanity: the guard changes nothing about rows reconcile never considered."""
+        past = manual_row(1, on=TODAY - timedelta(days=30))
+        listed = scraped("Some Touring Band", on=TODAY + timedelta(days=2))
+
+        plan = plan_upsert([past, row_for(listed, id=2)], [listed], TODAY)
+
+        assert plan.expired == []
