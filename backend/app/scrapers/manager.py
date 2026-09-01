@@ -93,6 +93,35 @@ def dedupe_scraped(scraped_events: list[ScrapedEvent]) -> list[ScrapedEvent]:
     return out
 
 
+def scraper_must_not_delete(row: Any) -> bool:
+    """True for a row whose existence is a human decision, so reconcile must leave it.
+
+    Reconcile deletes any row inside the scraped window the scrape did not return, which
+    is right for a listing a venue dropped and wrong for anything a person put there
+    deliberately. This is the one place that distinction lives; add to it rather than
+    growing another predicate somewhere else.
+
+    Today that is only `is_manually_created` — a hand-added event, which a scraper by
+    definition never returns, so without this every manual event at a scraped venue would
+    be deleted on the next run of that venue's scraper.
+
+    The flag rather than `source`: _apply_scraped() writes `row.source = se.source`
+    whenever a scraped event matches a stored row, so a source-based test stops protecting
+    a row the first time the venue lists the same show — and the row is deleted on the run
+    after that, having looked protected the whole time. Nothing in the scraper path writes
+    these flags, which is the property that makes them trustworthy here.
+
+    Issue #63 (admin-flagged duplicates) adds `duplicate_of_id is not None` to this: a row
+    an admin folded into another is hidden rather than gone, precisely so the judgement
+    stays reversible and auditable, and deleting it would destroy that.
+
+    getattr, not attribute access: plan_upsert is deliberately callable with lightweight
+    stand-ins (see tests/test_dedup.py), and this should not force every one of them to
+    declare every flag.
+    """
+    return bool(getattr(row, "is_manually_created", False))
+
+
 def plan_upsert(existing: list[Any], scraped_events: list[ScrapedEvent], today: date) -> UpsertPlan:
     """Match a scrape run against the rows already stored for one venue.
 
@@ -176,17 +205,8 @@ def plan_upsert(existing: list[Any], scraped_events: list[ScrapedEvent], today: 
     # own listings as soon as they happen.
     horizon = max(se.date for se in scraped_events)
     in_window = [r for r in existing if today <= r.date <= horizon]
-    # Hand-added rows are never candidates for deletion. A scraper by definition does not
-    # return them, so without this every manually created event at a scraped venue would
-    # be orphaned and deleted on the next run.
-    #
-    # The flag, not `source`: _apply_scraped() writes `row.source = se.source` whenever a
-    # scraped event matches a stored row, so a source-based filter would silently stop
-    # protecting a row the first time the venue listed the same show. getattr keeps the
-    # stand-in rows in tests/test_dedup.py working without every one declaring the field.
     orphans = [
-        r for r in in_window
-        if r.id not in claimed and not getattr(r, "is_manually_created", False)
+        r for r in in_window if r.id not in claimed and not scraper_must_not_delete(r)
     ]
 
     if orphans:
