@@ -94,6 +94,46 @@ def dedupe_scraped(scraped_events: list[ScrapedEvent]) -> list[ScrapedEvent]:
     return out
 
 
+def scraper_must_not_delete(row: Any) -> bool:
+    """True for a row whose existence is a human decision, so reconcile must leave it.
+
+    Reconcile deletes any row inside the scraped window the scrape did not return, which
+    is right for a listing a venue dropped and wrong for anything a person put there
+    deliberately. This is the one place that distinction lives; add to it rather than
+    growing another predicate somewhere else.
+
+    Two flags qualify:
+
+    `is_manually_created` — a hand-added event, which a scraper by definition never
+    returns, so without this every manual event at a scraped venue would be deleted on the
+    next run of that venue's scraper.
+
+    `duplicate_of_id` — a row an admin folded into another (issue #63). It is hidden rather
+    than gone precisely so the judgement stays reversible and auditable, so deleting it
+    destroys the thing the column exists for. Easy to miss, because the row is already
+    hidden from the calendar: nothing looks wrong until someone tries to unmark it and
+    finds it gone.
+
+    The flags rather than `source`: _apply_scraped() writes `row.source = se.source`
+    whenever a scraped event matches a stored row, so a source-based test stops protecting
+    a row the first time the venue lists the same show — and the row is deleted on the run
+    after that, having looked protected the whole time. Nothing in the scraper path writes
+    these flags, which is the property that makes them trustworthy here.
+
+    Both deletion paths in plan_upsert have to consult this, not just the orphan filter.
+    The loser of the candidate sort is `superseded`, and superseded rows are deleted in the
+    same pass — see the call sites.
+
+    getattr, not attribute access: plan_upsert is deliberately callable with lightweight
+    stand-ins (see tests/test_dedup.py), and this should not force every one of them to
+    declare every flag.
+    """
+    return bool(
+        getattr(row, "is_manually_created", False)
+        or getattr(row, "duplicate_of_id", None) is not None
+    )
+
+
 def plan_upsert(existing: list[Any], scraped_events: list[ScrapedEvent], today: date) -> UpsertPlan:
     """Match a scrape run against the rows already stored for one venue.
 
@@ -145,10 +185,26 @@ def plan_upsert(existing: list[Any], scraped_events: list[ScrapedEvent], today: 
             plan.inserts.append(se)
             continue
 
-        # Prefer the row whose title already matches what the source says now; fall back
-        # to the most recently seen row. Both keys are total, so the choice is stable.
+        # Rank, most significant key first: not-a-duplicate, then hand-added, then the row
+        # whose title already matches what the source says now, then the most recently seen
+        # row. Every key is total, so the choice is stable.
+        #
+        # "Not a duplicate" outranks "hand-added" rather than the other way round. A row an
+        # admin flagged as a duplicate has already been judged not to be the canonical one,
+        # so it must never be chosen as the survivor — and that judgement holds even for a
+        # row that was *also* added by hand, which is the combination the manual key alone
+        # would get backwards.
+        #
+        # The manual key still leads over the hash and recency keys: a venue that later
+        # lists a show an admin had already added by hand should enrich the curated row via
+        # _apply_scraped, not discard it in favour of the scraped one.
         unique.sort(
-            key=lambda r: (r.hash == se.hash, r.updated_at or datetime.min),
+            key=lambda r: (
+                getattr(r, "duplicate_of_id", None) is None,
+                getattr(r, "is_manually_created", False),
+                r.hash == se.hash,
+                r.updated_at or datetime.min,
+            ),
             reverse=True,
         )
         keep, rest = unique[0], unique[1:]
@@ -156,7 +212,18 @@ def plan_upsert(existing: list[Any], scraped_events: list[ScrapedEvent], today: 
         plan.updates.append((se, keep))
         for row in rest:
             claimed.add(row.id)
-            plan.superseded.append(row)
+            # Losing the sort means "not the canonical row", which is not the same as
+            # "delete me" — superseded rows are deleted further down. A human-owned row
+            # that loses is simply left alone: it stays claimed, so the orphan filter
+            # below skips it too, and it survives the run untouched.
+            #
+            # This is the second deletion path, and it is reachable in two ways the sort
+            # key cannot fix by itself. One scraped event can match both a survivor and a
+            # duplicate an admin folded into it (via external_id and hash respectively),
+            # which would delete the audit trail; and two hand-added rows can match the
+            # same scraped event, which would delete one of them.
+            if not scraper_must_not_delete(row):
+                plan.superseded.append(row)
 
     # --- Reconcile ---
     # Only rows inside the window the scraper actually covered are candidates. A scraper
@@ -165,7 +232,9 @@ def plan_upsert(existing: list[Any], scraped_events: list[ScrapedEvent], today: 
     # own listings as soon as they happen.
     horizon = max(se.date for se in scraped_events)
     in_window = [r for r in existing if today <= r.date <= horizon]
-    orphans = [r for r in in_window if r.id not in claimed]
+    orphans = [
+        r for r in in_window if r.id not in claimed and not scraper_must_not_delete(r)
+    ]
 
     if orphans:
         too_lossy = (
