@@ -972,6 +972,108 @@ async def create_manual_event(
     }
 
 
+@router.delete("/api/events/{event_id}", dependencies=[Depends(require_admin)])
+async def delete_manual_event(
+    event_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Delete a hand-added event. Only a hand-added one.
+
+    Restricted to is_manually_created rows, and that restriction is the point rather than
+    caution. Deleting a *scraped* event is futile — the next run of that venue's scraper
+    puts it straight back — so a general delete button would look broken while quietly
+    being the one tool that can destroy an archive row. Hiding a scraped event is already
+    covered by marking it non-live or flagging it a duplicate.
+
+    Hard delete, not a flag. There is no audit value in retaining a typo, and a
+    soft-delete column would have to be honoured by every read path in the app for the
+    rest of its life to serve a mistyped title.
+
+    Hand-added rows are the ones with no other way out. reconcile deliberately will not
+    touch them (scraper_must_not_delete), and a hand-added event at a hand-added venue is
+    never even considered, because scrape_all skips that venue entirely. Everything that
+    protects them from the scraper is what makes this endpoint necessary.
+    """
+    event = await session.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if not event.is_manually_created:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only hand-added events can be deleted. A scraped event would come back on "
+                "the next scrape — mark it non-live, or flag it as a duplicate, to hide it."
+            ),
+        )
+
+    # Rows folded into this one become visible again, because duplicate_of_id is ON DELETE
+    # SET NULL. That is the behaviour migration 0006 chose deliberately — a row should not
+    # stay hidden on account of a row that no longer exists — but it means deleting a
+    # survivor can put listings back on the public calendar, so report how many.
+    restored = (await session.execute(
+        select(func.count()).select_from(Event).where(Event.duplicate_of_id == event_id)
+    )).scalar_one()
+
+    name, on = event.name, event.date.isoformat()
+    await session.delete(event)
+    await session.commit()
+    logger.info(f"[admin] deleted manual event {event_id} {name!r} on {on}")
+    return {"ok": True, "id": event_id, "name": name, "restored_duplicates": restored}
+
+
+@router.delete("/api/venues/{venue_id}", dependencies=[Depends(require_admin)])
+async def delete_manual_venue(
+    venue_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Delete a hand-added venue, but only once nothing is attached to it.
+
+    Two refusals, and each prevents silent data loss rather than merely being careful.
+
+    A seeded venue is never deletable. seed_venues() would recreate it on the next boot
+    with a new id, so the venue appears to come back — while its events are gone for good,
+    cascade-deleted through Venue.events. That is pure loss with no upside, and it would
+    look like the delete had simply not worked.
+
+    A venue with events is refused, and the count is reported. Venue.events cascades with
+    delete-orphan, so one click on a venue holding a run of shows would take all of them
+    with it, with nothing naming what was lost. Deleting the events first is one extra step
+    and makes the scope of the decision visible. `event_count` here is every event, not just
+    upcoming ones: a past event is still a row, and cascading it away silently is the thing
+    being prevented.
+    """
+    venue = await session.get(Venue, venue_id)
+    if not venue:
+        raise HTTPException(status_code=404, detail="Venue not found")
+    if venue.scraper_type != MANUAL_SCRAPER_TYPE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f'"{venue.name}" is a scraped venue, not one added by hand. Deleting it '
+                "would remove its events and it would reappear empty on the next restart."
+            ),
+        )
+
+    event_count = (await session.execute(
+        select(func.count()).select_from(Event).where(Event.venue_id == venue_id)
+    )).scalar_one()
+    if event_count:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f'"{venue.name}" still has {event_count} event'
+                f'{"" if event_count == 1 else "s"}. Delete those first — removing the '
+                "venue would take them with it."
+            ),
+        )
+
+    name = venue.name
+    await session.delete(venue)
+    await session.commit()
+    logger.info(f"[admin] deleted manual venue {venue_id} {name!r}")
+    return {"ok": True, "id": venue_id, "name": name}
+
+
 @router.get("/api/series", dependencies=[Depends(require_admin)])
 async def list_series(session: AsyncSession = Depends(get_session)) -> dict:
     """List all series-level overrides with their venue name."""

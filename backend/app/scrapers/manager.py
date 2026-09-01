@@ -595,15 +595,24 @@ class ScrapeManager:
 
     # --- Bulk scrape entry points ---
 
-    async def scrape_all(self, scraper_types: Optional[list[str]] = None) -> list[dict]:
-        """Scrape all venues (or those matching given scraper_types).
+    async def scrape_all(
+        self,
+        scraper_types: Optional[list[str]] = None,
+        exclude_scraper_types: Optional[list[str]] = None,
+    ) -> list[dict]:
+        """Scrape all venues, optionally narrowed to or away from given scraper_types.
+
+        The single venue-selection query for the whole class — scrape_ticketmaster and
+        scrape_indie both come through here. That is deliberate: scrape_indie previously
+        built its own query and so missed the manual-venue exclusion below, which is the
+        kind of omission a second query invites.
 
         Venues whose scraper_type is MANUAL_SCRAPER_TYPE are excluded unconditionally, and
         this is a guardrail rather than an optimisation. There is no scraper for them by
         design, so _get_scraper returns None, scrape_venue raises "No scraper available",
-        and every one of them would write a failed ScrapeLog row on every cycle — four
-        times a day, forever, for each promoter an admin adds. The scrape would still look
-        broken in the logs while working perfectly.
+        and every one of them would write a failed ScrapeLog row on every cycle — for each
+        promoter an admin adds, indefinitely. The scrape would still look broken in the logs
+        while working perfectly.
 
         Excluded even when scraper_types names them explicitly: there is nothing to scrape,
         so an explicit request is a mistake rather than an override.
@@ -611,6 +620,8 @@ class ScrapeManager:
         query = select(Venue).where(Venue.scraper_type != MANUAL_SCRAPER_TYPE)
         if scraper_types:
             query = query.where(Venue.scraper_type.in_(scraper_types))
+        if exclude_scraper_types:
+            query = query.where(Venue.scraper_type.notin_(exclude_scraper_types))
         result = await self.session.execute(query)
         venues = result.scalars().all()
 
@@ -631,17 +642,17 @@ class ScrapeManager:
         return await self.scrape_all(scraper_types=["ticketmaster"])
 
     async def scrape_indie(self) -> list[dict]:
-        """Scrape only non-Ticketmaster venues."""
-        query = select(Venue).where(Venue.scraper_type != "ticketmaster")
-        result = await self.session.execute(query)
-        venues = result.scalars().all()
+        """Scrape only non-Ticketmaster venues.
 
-        results = []
-        for venue in venues:
-            r = await self.scrape_venue(venue)
-            results.append(r)
+        Delegates rather than running its own query. It used to build
+        `select(Venue).where(scraper_type != "ticketmaster")` and loop itself, which meant a
+        second venue query that did *not* pick up the manual-venue exclusion — so every
+        promerter an admin created would be scraped here, fail for want of a scraper, and
+        write a failed ScrapeLog three times a day (this is a scheduled job). Only dormant
+        in production because ENABLE_SCHEDULER is false there.
 
-        # Recompute live-music flags across all upcoming events now that new data is in.
-        self.last_reclassify = await self.reclassify_all()
-
-        return results
+        One query in this class is the fix, not a tidy-up: any venue-selection rule added in
+        future now applies to every entry point automatically instead of needing to be
+        remembered twice.
+        """
+        return await self.scrape_all(exclude_scraper_types=["ticketmaster"])

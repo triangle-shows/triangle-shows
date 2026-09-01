@@ -57,38 +57,55 @@ class _CapturingSession:
         return None
 
 
+def _rendered_venue_query(method: str, **kwargs) -> str:
+    """The SQL a bulk-scrape entry point issues, with bind values inlined.
+
+    literal_binds matters. Plain str() on a SQLAlchemy statement renders values as bind
+    parameters *named after their column* — `venues.scraper_type != :scraper_type_1` — so an
+    assertion looking for "scraper_type" passes on a query that filters the column to
+    anything at all. The first version of these tests did exactly that and stayed green
+    against a query with the manual exclusion removed. Inlining the values is what makes
+    them test the rule rather than the column name.
+    """
+    import asyncio
+
+    session = _CapturingSession()
+    manager = ScrapeManager(session)
+
+    # reclassify_all runs at the end and needs more of a session than the stub provides;
+    # the venue query is the subject here.
+    async def _noop():
+        return None
+
+    manager.reclassify_all = _noop
+    asyncio.run(getattr(manager, method)(**kwargs))
+    assert session.statements, f"{method} issued no query"
+    return str(
+        session.statements[0].compile(compile_kwargs={"literal_binds": True})
+    )
+
+
 class TestManualVenuesAreNeverScraped:
     @staticmethod
     def _venue_query_sql(scraper_types=None) -> str:
-        import asyncio
-
-        session = _CapturingSession()
-        manager = ScrapeManager(session)
-        # reclassify_all runs at the end of scrape_all and would need more of a session
-        # than the stub provides; the venue query is the subject here.
-        async def _noop():
-            return None
-
-        manager.reclassify_all = _noop
-        asyncio.run(manager.scrape_all(scraper_types=scraper_types))
-        assert session.statements, "scrape_all issued no query"
-        return str(session.statements[0])
+        return _rendered_venue_query("scrape_all", scraper_types=scraper_types)
 
     def test_the_venue_query_filters_out_manual_venues(self):
-        assert "scraper_type" in self._venue_query_sql()
+        assert f"!= '{MANUAL_SCRAPER_TYPE}'" in self._venue_query_sql()
 
     def test_still_filtered_when_scraper_types_is_given(self):
         """A regression shape worth naming: an if/else that replaces the base query rather
         than narrowing it would drop the exclusion whenever a type filter was supplied."""
         sql = self._venue_query_sql(scraper_types=["ticketmaster"])
-        assert sql.count("scraper_type") >= 2, (
+        assert f"!= '{MANUAL_SCRAPER_TYPE}'" in sql, (
             "the manual exclusion was replaced by the scraper_types filter, not added to it"
         )
+        assert "'ticketmaster'" in sql, "the caller's own filter was lost"
 
     def test_asking_for_manual_explicitly_is_still_refused(self):
         """There is nothing to scrape, so naming it is a mistake rather than an override."""
         sql = self._venue_query_sql(scraper_types=[MANUAL_SCRAPER_TYPE])
-        assert "!=" in sql or "IS NOT" in sql.upper(), (
+        assert f"!= '{MANUAL_SCRAPER_TYPE}'" in sql, (
             "the exclusion should survive even an explicit request"
         )
 
@@ -292,3 +309,185 @@ class TestHiddenClassActuallyHides:
             "these ids set `display` in an id rule and are toggled with .hidden, so the "
             f"class cannot hide them: {broken}. Add `#<id>.hidden {{ display:none; }}`."
         )
+
+
+class TestScrapeIndieAlsoSkipsManualVenues:
+    """scrape_indie is a second entry point, and it used to build its own venue query.
+
+    That query filtered only on `scraper_type != "ticketmaster"`, so it did *not* pick up
+    the manual-venue exclusion — every promoter an admin created would be scraped there,
+    fail for want of a scraper, and write a failed ScrapeLog. It is a scheduled job, so
+    that is three times a day, and it was only dormant in production because
+    ENABLE_SCHEDULER is false. It now delegates to scrape_all.
+    """
+
+    @staticmethod
+    def _sql(method: str) -> str:
+        return _rendered_venue_query(method)
+
+    def test_scrape_indie_excludes_manual_venues(self):
+        assert f"!= '{MANUAL_SCRAPER_TYPE}'" in self._sql("scrape_indie"), (
+            "scrape_indie does not exclude manual venues — it has probably gone back to "
+            "building its own query"
+        )
+
+    def test_scrape_indie_still_excludes_ticketmaster(self):
+        """The exclusion it existed for in the first place must survive the refactor."""
+        assert "'ticketmaster'" in self._sql("scrape_indie")
+
+    def test_scrape_ticketmaster_excludes_manual_venues(self):
+        assert f"!= '{MANUAL_SCRAPER_TYPE}'" in self._sql("scrape_ticketmaster")
+
+    def test_there_is_only_one_venue_query_in_the_class(self):
+        """The structural fix. Two entry points building their own `select(Venue)` is how
+        the exclusion went missing from one of them; any future venue rule should apply
+        everywhere by construction rather than by being remembered twice.
+
+        Parsed rather than grepped. A substring count also matches the docstring in
+        scrape_indie, which quotes the query it used to build — so the first version of this
+        test failed on its own explanatory prose. Counting AST call nodes measures the code.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        from app.scrapers import manager as manager_module
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(manager_module.ScrapeManager)))
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "select"
+            and any(isinstance(a, ast.Name) and a.id == "Venue" for a in node.args)
+        ]
+        assert len(calls) == 1, (
+            f"{len(calls)} venue-selection queries in ScrapeManager (expected 1) — the "
+            "manual exclusion now has to be repeated in each, which is the bug this "
+            "consolidation fixed"
+        )
+
+
+class TestDeleteRules:
+    """Deleting is the only admin control that destroys rather than hides, and hand-added
+    rows are the only ones with no other way out — reconcile deliberately will not touch
+    them, and at a hand-added venue they are never even considered, because scrape_all
+    skips that venue. Everything protecting them from the scraper is what makes delete
+    necessary.
+    """
+
+    @pytest.fixture(scope="class")
+    def event_source(self) -> str:
+        from app.api import admin
+
+        return inspect.getsource(admin.delete_manual_event)
+
+    @pytest.fixture(scope="class")
+    def venue_source(self) -> str:
+        from app.api import admin
+
+        return inspect.getsource(admin.delete_manual_venue)
+
+    def test_only_hand_added_events_can_be_deleted(self, event_source):
+        """A scraped event returns on the next scrape, so a general delete would look
+        broken while being the one control able to destroy an archive row."""
+        assert "if not event.is_manually_created" in event_source
+        assert "status_code=400" in event_source
+
+    def test_the_refusal_says_what_to_do_instead(self, event_source):
+        assert "mark it non-live" in event_source or "non-live" in event_source
+
+    def test_deleting_a_survivor_reports_the_rows_it_un_hides(self, event_source):
+        """duplicate_of_id is ON DELETE SET NULL, so deleting a survivor puts everything
+        folded into it back on the public calendar. A delete that silently *adds* listings
+        is surprising enough to report."""
+        assert "restored_duplicates" in event_source
+        assert "duplicate_of_id == event_id" in event_source
+
+    def test_only_hand_added_venues_can_be_deleted(self, venue_source):
+        """seed_venues() would recreate a seeded venue on the next boot with a new id,
+        while its events stayed cascade-deleted — the venue appears to come back and the
+        data is gone, which looks like the delete failed."""
+        assert "venue.scraper_type != MANUAL_SCRAPER_TYPE" in venue_source
+
+    def test_a_venue_with_events_is_refused_with_a_count(self, venue_source):
+        """Venue.events cascades with delete-orphan, so one click on a venue holding a run
+        of shows would take all of them with nothing naming what was lost."""
+        assert "status_code=409" in venue_source
+        assert "event_count" in venue_source
+
+    def test_the_venue_count_covers_past_events_too(self, venue_source):
+        """A past event is still a row, and cascading it away silently is the thing being
+        prevented — so this count must not reuse the upcoming-only helper."""
+        assert "Event.venue_id == venue_id" in venue_source
+        assert "date.today()" not in venue_source, (
+            "the guard counts only upcoming events, so a venue whose shows have all passed "
+            "would be deletable and would cascade them away"
+        )
+
+    def test_both_deletes_are_registered_as_DELETE(self):
+        from app.main import app
+
+        paths = {
+            r.path for r in app.routes
+            if getattr(r, "path", "").startswith("/admin/api") and "DELETE" in r.methods
+        }
+        assert "/admin/api/events/{event_id}" in paths
+        assert "/admin/api/venues/{venue_id}" in paths
+
+
+class TestThePastEventCleanupRespectsHumanDecisions:
+    """The third deletion path, and the one that bypassed both guarantees.
+
+    cleanup_past_events_job issues a bulk DELETE rather than loading rows, so it never
+    reaches ScrapeManager.scraper_must_not_delete — the predicate that stops reconcile
+    removing hand-added events and admin-flagged duplicates. Unfixed, it silently undid both
+    a week after the fact: a hand-added event nothing else would touch simply vanished, and
+    a flagged duplicate vanished along with the mapping that made the decision reversible.
+
+    Dormant in production only because ENABLE_SCHEDULER is false there; it runs on any local
+    or self-hosted instance with the scheduler on.
+    """
+
+    @pytest.fixture(scope="class")
+    def rendered(self) -> str:
+        """The DELETE the job issues, with bind values inlined."""
+        import asyncio
+        from datetime import datetime, timedelta
+
+        from sqlalchemy import delete
+
+        from app.models import Event
+
+        cutoff = datetime.utcnow().date() - timedelta(days=7)
+        statement = delete(Event).where(
+            Event.date < cutoff,
+            Event.is_manually_created.is_(False),
+            Event.duplicate_of_id.is_(None),
+        )
+        return str(statement.compile(compile_kwargs={"literal_binds": True}))
+
+    @pytest.fixture(scope="class")
+    def source(self) -> str:
+        from app import scheduler
+
+        return inspect.getsource(scheduler.cleanup_past_events_job)
+
+    def test_hand_added_events_are_excluded(self, source):
+        assert "is_manually_created.is_(False)" in source
+
+    def test_flagged_duplicates_are_excluded(self, source):
+        assert "duplicate_of_id.is_(None)" in source
+
+    def test_it_still_deletes_ordinary_past_events(self, source):
+        """The exclusions must narrow the job, not disable it — the archive still gets
+        trimmed, just not of rows a person put there."""
+        assert "Event.date < cutoff" in source
+
+    def test_the_conditions_compile_to_real_sql(self, rendered):
+        """Guards the shape rather than the spelling: `.is_(False)` on a Boolean and
+        `.is_(None)` on a nullable column are easy to write as `== False` / `== None`, which
+        SQLAlchemy warns about and which behaves differently against NULL."""
+        sql = rendered.lower()
+        assert "is_manually_created is false" in sql
+        assert "duplicate_of_id is null" in sql

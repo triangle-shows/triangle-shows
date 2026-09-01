@@ -205,6 +205,23 @@ ADMIN_HTML = """<!doctype html>
      background:var(--accent); color:#0e0e10; font-weight:700; cursor:pointer; border-radius:2px; }
   #add button.go:hover { filter:brightness(1.1); }
   #add button.go:disabled { opacity:0.5; cursor:default; filter:none; }
+  /* Delete is the only control here that destroys rather than hides, so it is the only one
+     coloured as a warning. Muted rather than a solid red fill: it sits in a row of ordinary
+     actions and should read as "careful", not as the primary thing to press. */
+  button.danger { border-color:#5c2f2f !important; color:#e08a88 !important; }
+  button.danger:hover:not(:disabled) { border-color:#e0625f !important; color:#e0625f !important;
+                                       background:#2a1616 !important; }
+  button.danger:disabled { opacity:0.45; cursor:default; }
+  #venueList { margin-top:1.6rem; border-top:1px solid #2a2a2e; padding-top:0.6rem; }
+  .vrow { display:flex; align-items:center; gap:0.6rem; padding:0.35rem 0;
+          border-bottom:1px solid #1a1a1e; }
+  .vrow:last-child { border-bottom:none; }
+  .vrow .sw { width:0.8rem; height:0.8rem; border-radius:2px; flex:none; }
+  .vrow .vn { color:#e8e6e3; flex:1; }
+  .vrow .cm { color:#8a8a8e; font-size:0.72rem; }
+  .vrow button { font-family:inherit; font-size:0.68rem; padding:0.22rem 0.5rem;
+          border:1px solid #3a3a3e; background:transparent; color:#c8c6c3; cursor:pointer;
+          border-radius:2px; }
 </style>
 </head><body>
   <header>
@@ -411,6 +428,7 @@ ADMIN_HTML = """<!doctype html>
           <button type="submit" class="go" id="fSubmit">add event</button>
         </div>
       </form>
+      <div id="venueList"></div>
     </div>
   </main>
 <script>
@@ -490,7 +508,14 @@ ADMIN_HTML = """<!doctype html>
     if (ev.duplicate_of_id) {
       return '<button onclick="unfold(' + ev.id + ')">not a duplicate</button>';
     }
-    let a = approveAction(ev, false, 1) + ' ';
+    // Delete is offered only on hand-added rows, matching the endpoint. A scraped event
+    // would return on the next scrape, so the button would look broken; and it is the one
+    // control here that destroys rather than hides, so it should not appear on rows where
+    // hiding is the right answer.
+    let a = ev.is_manually_created
+      ? '<button class="danger" onclick="deleteEvent(' + ev.id + ',' + JSON.stringify(esc(ev.name)) + ')">delete</button> '
+      : '';
+    a += approveAction(ev, false, 1) + ' ';
     if (ev.is_manual_override) {
       a += '<button onclick="clearOv(' + ev.id + ')">clear override</button>';
     } else {
@@ -745,6 +770,30 @@ ADMIN_HTML = """<!doctype html>
     reload();
   }
 
+  async function deleteEvent(id, name) {
+    // Named in the prompt, because "delete this event?" on a list of near-identical rows
+    // is how the wrong one goes. Says permanent, because unlike hiding it is.
+    if (!confirm('Delete "' + name + '" permanently?\\n\\n' +
+                 'This cannot be undone. Only hand-added events can be deleted.')) return;
+    await foldAction(async () => {
+      const r = await api('/admin/api/events/' + id, { method: 'DELETE' });
+      // Deleting a survivor un-hides whatever was folded into it (ON DELETE SET NULL), so
+      // the calendar can gain rows from a delete. Surprising enough to say out loud.
+      if (r && r.restored_duplicates) {
+        $('#ok').textContent = 'Deleted. ' + r.restored_duplicates + ' listing' +
+          (r.restored_duplicates === 1 ? '' : 's') +
+          ' that had been hidden as duplicates of it are visible again.';
+      }
+    });
+  }
+
+  async function deleteVenue(id, name) {
+    if (!confirm('Delete the venue "' + name + '" permanently?\\n\\n' +
+                 'Only possible while it has no events at all.')) return;
+    await foldAction(() => api('/admin/api/venues/' + id, { method: 'DELETE' }));
+    if (state.view === 'add') await loadVenues(null);
+  }
+
   async function absorb(survivorId, duplicateIds) {
     // Folding hides rows rather than deleting them, and every fold is undoable from the
     // row it creates — so this asks once, plainly, rather than with a scary warning.
@@ -799,6 +848,29 @@ ADMIN_HTML = """<!doctype html>
     // instead of creating "durham" alongside "Durham" and splitting the sidebar.
     const cities = [...new Set(data.scraped.concat(data.manual).map((v) => v.city))].sort();
     $('#cityList').innerHTML = cities.map((c) => '<option value="' + esc(c) + '"></option>').join('');
+
+    // The promoters an admin has created, with a way to remove one entered by mistake.
+    // Scraped venues are deliberately absent: they cannot be deleted, so listing them here
+    // would only offer a button that always refuses.
+    if (!data.manual.length) {
+      $('#venueList').innerHTML = '';
+    } else {
+      $('#venueList').innerHTML = '<h2>Promoters you have added</h2>' +
+        '<p class="hint">Delete removes the venue itself. It only works once the venue has ' +
+        'no events at all — otherwise removing it would take them with it.</p>' +
+        data.manual.map((v) => {
+          const n = v.upcoming_event_count;
+          const busy = n > 0;
+          return '<div class="vrow">' +
+            '<span class="sw" style="background:' + esc(v.color) + '"></span>' +
+            '<span class="vn">' + esc(v.name) + '</span>' +
+            '<span class="cm">' + esc(v.city) + '</span>' +
+            '<span class="cm">' + (busy ? n + ' upcoming' : 'nothing upcoming') + '</span>' +
+            '<button class="danger"' + (busy ? ' disabled title="delete its events first"' : '') +
+              ' onclick="deleteVenue(' + v.id + ',' + JSON.stringify(esc(v.name)) + ')">delete</button>' +
+            '</div>';
+        }).join('');
+    }
     venueChanged();
   }
 

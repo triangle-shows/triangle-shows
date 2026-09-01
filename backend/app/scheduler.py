@@ -51,13 +51,36 @@ async def scrape_indie_job():
 
 
 async def cleanup_past_events_job():
-    """Delete events more than 7 days in the past."""
+    """Delete events more than 7 days in the past, except rows a human owns.
+
+    This is the third deletion path in the app, and the two exclusions below bring it into
+    line with the other two. It issues a bulk DELETE rather than going through the ORM, so
+    it bypasses ScrapeManager.scraper_must_not_delete entirely — the predicate that stops
+    reconcile removing hand-added events and admin-flagged duplicates. Without them, this
+    job silently undoes both guarantees a week after the fact:
+
+      * a hand-added event (#87) disappears, though nothing else in the app will touch it
+      * a row flagged as a duplicate (#63) disappears, destroying the mapping that made the
+        decision reversible and auditable — and taking the "3 hidden duplicates" count on
+        its survivor with it
+
+    Only dormant today because ENABLE_SCHEDULER is false in production (cloudbuild.yaml);
+    it runs on any local or self-hosted instance with the scheduler on.
+
+    Deliberately not routed through scraper_must_not_delete: that takes a row, and the
+    point of a bulk DELETE is not to load any. The conditions are duplicated here on
+    purpose, with this comment as the link.
+    """
     logger.info("Cleaning up past events")
     # Keep a 7-day buffer so recently-ended events don't vanish immediately
     cutoff = datetime.utcnow().date() - timedelta(days=7)
     async with async_session() as session:
         result = await session.execute(
-            delete(Event).where(Event.date < cutoff)
+            delete(Event).where(
+                Event.date < cutoff,
+                Event.is_manually_created.is_(False),
+                Event.duplicate_of_id.is_(None),
+            )
         )
         await session.commit()
         logger.info(f"Deleted {result.rowcount} past events")
