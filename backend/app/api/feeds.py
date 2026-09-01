@@ -46,6 +46,12 @@ async def get_ical_feed(
     today = date.today()
     # Only include upcoming events — no historical clutter in subscribers' calendars
     conditions = [Event.date >= today]
+    # A row an admin folded into another as a duplicate never reaches a subscriber
+    # (issue #63). No opt-in, unlike include_non_music: a duplicate is not a kind of
+    # event someone might want, it is a listing that should not exist. This matters more
+    # here than on the calendar — a subscribed feed writes into someone's own calendar,
+    # where a duplicate entry is not merely clutter but a second reminder for one show.
+    conditions.append(Event.duplicate_of_id.is_(None))
     # Mirror the on-site calendar: hide non-live-music events unless opted in.
     if not include_non_music:
         conditions.append(Event.is_live_music.is_(True))
