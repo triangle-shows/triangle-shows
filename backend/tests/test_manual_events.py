@@ -436,58 +436,86 @@ class TestDeleteRules:
         assert "/admin/api/venues/{venue_id}" in paths
 
 
-class TestThePastEventCleanupRespectsHumanDecisions:
-    """The third deletion path, and the one that bypassed both guarantees.
+class TestNothingScheduledDeletesEvents:
+    """Past events are kept, and no scheduled job may delete any.
 
-    cleanup_past_events_job issues a bulk DELETE rather than loading rows, so it never
-    reaches ScrapeManager.scraper_must_not_delete — the predicate that stops reconcile
-    removing hand-added events and admin-flagged duplicates. Unfixed, it silently undid both
-    a week after the fact: a hand-added event nothing else would touch simply vanished, and
-    a flagged duplicate vanished along with the mapping that made the decision reversible.
+    There used to be a nightly job removing every event more than 7 days old. It never ran
+    anywhere — ENABLE_SCHEDULER is false in cloudbuild.yaml, backend/.env.example,
+    docs/SELF-HOSTING.md and config.py's default — which is the only reason production still
+    holds events back to January. Removed rather than commented out, because commented-out
+    code gets re-enabled by someone reading the comment as a to-do.
 
-    Dormant in production only because ENABLE_SCHEDULER is false there; it runs on any local
-    or self-hosted instance with the scheduler on.
+    Three parts of the app already assume past events persist: plan_upsert bounds reconcile
+    to `today <= date <= horizon` so a scrape cannot touch the archive; the admin queue and
+    reclassify_all() work from reclassify_floor(), which is 30 days back; and the public
+    calendar scrolls backwards with no floor on /api/events. A 7-day cleanup contradicted
+    all three, and additionally bypassed scraper_must_not_delete by issuing a bulk DELETE —
+    so it would have silently undone the hand-added and flagged-duplicate protections a week
+    after the fact.
+
+    These assertions are about the *module*, not one function, because the point is that no
+    scheduled job deletes events — not that one particular job was fixed.
     """
 
     @pytest.fixture(scope="class")
-    def rendered(self) -> str:
-        """The DELETE the job issues, with bind values inlined."""
-        import asyncio
-        from datetime import datetime, timedelta
-
-        from sqlalchemy import delete
-
-        from app.models import Event
-
-        cutoff = datetime.utcnow().date() - timedelta(days=7)
-        statement = delete(Event).where(
-            Event.date < cutoff,
-            Event.is_manually_created.is_(False),
-            Event.duplicate_of_id.is_(None),
-        )
-        return str(statement.compile(compile_kwargs={"literal_binds": True}))
-
-    @pytest.fixture(scope="class")
-    def source(self) -> str:
+    def scheduler_module(self):
         from app import scheduler
 
-        return inspect.getsource(scheduler.cleanup_past_events_job)
+        return scheduler
 
-    def test_hand_added_events_are_excluded(self, source):
-        assert "is_manually_created.is_(False)" in source
+    @pytest.fixture(scope="class")
+    def source(self, scheduler_module) -> str:
+        return inspect.getsource(scheduler_module)
 
-    def test_flagged_duplicates_are_excluded(self, source):
-        assert "duplicate_of_id.is_(None)" in source
+    def test_the_cleanup_job_is_gone(self, scheduler_module):
+        assert not hasattr(scheduler_module, "cleanup_past_events_job"), (
+            "the past-event cleanup job is back; past events are kept deliberately"
+        )
 
-    def test_it_still_deletes_ordinary_past_events(self, source):
-        """The exclusions must narrow the job, not disable it — the archive still gets
-        trimmed, just not of rows a person put there."""
-        assert "Event.date < cutoff" in source
+    def test_no_scheduled_job_issues_a_delete(self, source):
+        """Checks the code, not just that one name is absent. Any new job that deletes rows
+        has to trip this and be justified."""
+        import ast
+        import textwrap
 
-    def test_the_conditions_compile_to_real_sql(self, rendered):
-        """Guards the shape rather than the spelling: `.is_(False)` on a Boolean and
-        `.is_(None)` on a nullable column are easy to write as `== False` / `== None`, which
-        SQLAlchemy warns about and which behaves differently against NULL."""
-        sql = rendered.lower()
-        assert "is_manually_created is false" in sql
-        assert "duplicate_of_id is null" in sql
+        tree = ast.parse(textwrap.dedent(source))
+        deletes = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "delete"
+        ]
+        assert not deletes, "a scheduled job now issues a delete()"
+        assert "session.delete" not in source, "a scheduled job now deletes via the ORM"
+
+    def test_the_module_cannot_delete_without_a_new_import(self, scheduler_module):
+        """The structural version of the same rule: with no `delete` and no Event model in
+        scope, adding a deletion here requires adding an import, which is visible in review.
+        """
+        assert not hasattr(scheduler_module, "delete")
+        assert not hasattr(scheduler_module, "Event")
+
+    def test_the_scrape_jobs_still_exist(self, scheduler_module):
+        """Removing the cleanup must not have removed the jobs the scheduler is for."""
+        assert hasattr(scheduler_module, "scrape_ticketmaster_job")
+        assert hasattr(scheduler_module, "scrape_indie_job")
+
+    def test_configure_scheduler_registers_only_the_two_scrapes(self, scheduler_module):
+        """Registered by id, so a third job appearing is a deliberate decision rather than
+        something that slips in."""
+        registered = set()
+
+        class _Recorder:
+            def add_job(self, func, trigger, id=None, **kwargs):
+                registered.add(id)
+
+        original = scheduler_module.scheduler
+        scheduler_module.scheduler = _Recorder()
+        try:
+            scheduler_module.configure_scheduler()
+        finally:
+            scheduler_module.scheduler = original
+
+        assert registered == {"scrape_ticketmaster", "scrape_indie"}, (
+            f"unexpected scheduled jobs: {sorted(registered)}"
+        )
