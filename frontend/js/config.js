@@ -5,9 +5,17 @@
 // production instead. Scoped to that exact port on purpose: the docker-compose stack
 // serves the real app on :8000 and must keep talking to its own local API.
 // CORS permits this — allow_origins is "*" with allow_credentials off.
+// Any *.localhost name is covered too, not just "localhost" itself: browsers resolve the
+// whole suffix to loopback, and the Durham variant is previewed at
+// durm-shows.localhost:8080, which would otherwise fall through to its own origin and
+// find no API there.
+const _isLoopbackHost =
+  location.hostname === "localhost" ||
+  location.hostname === "127.0.0.1" ||
+  location.hostname.endsWith(".localhost");
+
 const API_BASE =
-  (location.hostname === "localhost" || location.hostname === "127.0.0.1") &&
-  location.port === "8080"
+  _isLoopbackHost && location.port === "8080"
     ? "https://triangle-shows.net"
     : window.location.origin;
 
@@ -153,10 +161,28 @@ function fitAsciiTitle() {
 document.addEventListener("DOMContentLoaded", fitAsciiTitle);
 window.addEventListener("resize", fitAsciiTitle);
 
-// Per-subdomain site configuration. Detected once at load time from hostname.
-const SITE_CONFIG = (function () {
-  const host = window.location.hostname;
-  if (host.startsWith("durm.")) {
+// Per-site configuration, chosen from the hostname once at load time.
+//
+// The Durham variant answers on two kinds of host: its own domain, durm-shows.net, and
+// the older durm.* subdomain it grew out of. Both are kept working — the subdomain has
+// been linked to and bookmarked, and there is no reason to break it.
+//
+// Hostname detection is factored into a function taking the host explicitly rather than
+// reading window.location directly, so it can be exercised for a host other than the one
+// the page happens to be served from. Without that, the only way to check the Durham
+// variant is to deploy and visit it.
+// durm-shows.localhost is here so the Durham variant can be opened locally. Browsers
+// resolve *.localhost to the loopback address without a hosts-file entry, so
+// http://durm-shows.localhost:8080 reaches the local preview server and picks the variant
+// up from the hostname. Harmless in production: the name is unreachable from anywhere
+// except the machine serving it.
+const DURM_HOSTS = ["durm-shows.net", "www.durm-shows.net", "durm-shows.localhost"];
+
+function detectSiteConfig(host) {
+  host = String(host || "").toLowerCase();
+  // durm-shows.net is matched exactly; durm.* covers the subdomain form. Note these are
+  // genuinely different prefixes — "durm-shows.net" does not start with "durm.".
+  if (host.startsWith("durm.") || DURM_HOSTS.includes(host)) {
     return {
       city:      "Durham",
       title:     "durm-shows",
@@ -166,9 +192,11 @@ const SITE_CONFIG = (function () {
     };
   }
   return { city: null };
-})();
+}
 
-// Apply subdomain-specific title, subtitle, and default palette.
+const SITE_CONFIG = detectSiteConfig(window.location.hostname);
+
+// Apply site-specific title, subtitle, and default palette.
 // Runs after DOM is ready; palette is only defaulted if the user has no saved preference.
 function applySiteConfig() {
   if (!SITE_CONFIG.city) return;
