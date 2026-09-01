@@ -9,6 +9,7 @@ Requires: DATABASE_URL env var (falls back to alembic.ini), app.database.Base,
 
 # --- Imports ---
 
+import logging
 import os
 import sys
 from logging.config import fileConfig
@@ -34,8 +35,27 @@ if db_url:
     db_url = db_url.replace("ssl=require", "sslmode=require")
     config.set_main_option("sqlalchemy.url", db_url)
 
-# Configure logging from alembic.ini if a config file is present
-if config.config_file_name is not None:
+# Configure logging from alembic.ini — but only when nothing has configured it already.
+#
+# main.py applies migrations from inside its lifespan handler, which runs this file in the
+# app's own process. fileConfig defaults to disable_existing_loggers=True, so an
+# unconditional call here disabled every app.* logger and replaced root's handlers with
+# alembic.ini's. Two things broke, both silently:
+#
+#   * Nothing logged after migrations was emitted — no "Migrations applied", no
+#     per-request lines, and not one ERROR-severity entry across a period containing
+#     hundreds of HTTP 500s. That is issue #79, and it is why those 500s have no
+#     traceback to diagnose.
+#   * Root's handlers lost the redact_handler wrapper from #77, reopening the
+#     Ticketmaster credential sink for anything logging through root. #77's docstring
+#     names this residue exactly: "handlers installed *after* this runs are not
+#     covered".
+#
+# A root logger with handlers means somebody has already configured logging deliberately
+# — under the alembic CLI it has none, so the ini still applies there, which is the case
+# this call exists for. main.py additionally re-applies its own configuration after
+# migrations, so the fix does not depend on this check alone being right.
+if config.config_file_name is not None and not logging.getLogger().handlers:
     fileConfig(config.config_file_name)
 
 # Point Alembic at the full set of ORM models so it can diff against the live schema
