@@ -216,13 +216,52 @@ app = FastAPI(
 # frontend/js/config.js sets API_BASE to window.location.origin and the admin UI fetches
 # relative paths, so every in-app request is same-origin, where CORS does not apply.
 #
-# Keeping "*" rather than an allowlist is deliberate: the read API is public, so leaving it
-# usable from any page costs nothing once credentials are off. Narrowing allow_origins to
-# the real site origins would stop third parties consuming it from a browser — a product
-# decision, not a security one.
+# The "*" is now an allowlist. That is the product decision this comment used to describe as
+# available — taken deliberately, alongside #62's gate on the queryable endpoints.
+#
+# What it stops: a third party building a browser app whose JavaScript calls this API from
+# *their* users' browsers — a competing calendar with no infrastructure and all our
+# bandwidth. Their users' browsers now refuse to hand the response back.
+#
+# What it does not stop, and must not be mistaken for: a server-side scraper. CORS is a
+# browser protection. A script is not a browser, never reads the header, and is unaffected.
+# Neither would an Origin or Referer check be — both are client-set, so
+# `curl -H "Origin: https://triangle-shows.net"` defeats them in one line. Requests carrying
+# no Origin at all — every calendar client polling /feeds/events.ics — are outside CORS
+# entirely and stay unaffected.
+#
+# Note this costs the site nothing, because every in-app request is already same-origin (see
+# above), where CORS does not apply. The allowlist is what a cross-origin caller is measured
+# against, and the site is never one. Listing the real origins rather than an empty list
+# keeps a future cross-origin case working and documents what the sites actually are.
+#
+# allow_credentials stays False regardless. That flag is what made the old "*" merely
+# permissive rather than dangerous, and narrowing origins is not a reason to relax it.
+ALLOWED_ORIGINS = [
+    "https://triangle-shows.net",
+    "https://www.triangle-shows.net",
+    "https://durm.triangle-shows.net",  # the older Durham subdomain, still served
+    "https://durm-shows.net",
+    "https://www.durm-shows.net",
+]
+
+# triangle-shows.org is deliberately absent: Cloudflare 301s it to triangle-shows.net, so a
+# document is never served from that origin and a browser never sends it.
+#
+# Local origins only outside production, so a deployment cannot end up trusting localhost.
+# Port 8080 is the static preview server; *.localhost covers durm-shows.localhost, which is
+# how the Durham variant is opened locally (see frontend/js/config.js).
+if settings.APP_ENV != "production":
+    ALLOWED_ORIGINS += [
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+        "http://durm-shows.localhost:8080",
+        "http://localhost:8000",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
