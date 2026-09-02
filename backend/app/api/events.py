@@ -1,21 +1,30 @@
 """
 Event API endpoints for the Triangle Shows calendar.
 
-Role: Serves GET /api/events/fullcalendar (the primary frontend feed), GET /api/events/{id},
-and GET /api/events (paginated list). These endpoints are called by the Vanilla JS +
-FullCalendar v6 frontend on page load and whenever the user navigates the calendar.
+Role: Serves three read endpoints, and only one of them is the site's.
+
+  * GET /api/events/fullcalendar — what frontend/js/app.js loads on page load. The whole
+    calendar, unbounded and unpaginated, filtered in the browser afterwards.
+  * GET /api/events/{id} and GET /api/events — the queryable pair, for interrogating the
+    dataset rather than drawing the calendar. **Neither is called by frontend/**, and both
+    are gated by require_query_api while a registration process is designed (issue #62).
+
+An earlier version of this docstring said all three were called by the frontend. They were
+not, which is what made closing the pair free.
+
 Requires: async PostgreSQL session (app.database), Event/Venue ORM models (app.models),
-response schemas (app.schemas).
+response schemas (app.schemas), settings.PUBLIC_QUERY_API_ENABLED (app.config).
 """
 import re
 from datetime import date, datetime, time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from app.config import settings
 from app.database import get_session
 from app.models import Event, Venue
 from app.timefmt import format_time_12h
@@ -233,12 +242,48 @@ async def get_fullcalendar_events(
     return fc_events
 
 
-@router.get("/{event_id}")
+async def require_query_api(request: Request) -> None:
+    """Gate the queryable read endpoints while a registration process is designed (#62).
+
+    Applied to GET /api/events and GET /api/events/{id} — the two endpoints that let a
+    caller *interrogate* the dataset (search, filter by genre or status, page through it,
+    address a row by id) rather than read the calendar the site draws. Neither is called by
+    frontend/, verified by grep: the site uses only /api/events/fullcalendar, /api/venues
+    and /feeds/events.ics. So closing them costs the site nothing.
+
+    403 rather than 404, and with a message naming where to ask. This is a policy boundary,
+    not a security one — the data is public and the site renders it — so pretending the
+    endpoints do not exist would mislead an integrator acting in good faith while doing
+    nothing to a scraper, who does not need them.
+
+    **What this does not do.** It does not stop bulk collection, and reading it as though it
+    does would be the expensive mistake. /api/events/fullcalendar is unauthenticated, takes
+    no date bound, and returns every event with every field — 2,854 records and 2.4 MB in
+    one request at the time of writing — because that is exactly what the site itself
+    fetches on page load. A commercial actor does not need the endpoints closed here; one
+    request to the endpoint that has to stay open gets them the same data, in a request
+    indistinguishable from a visitor's. See #62 for the payload split that would actually
+    raise the cost.
+    """
+    if settings.PUBLIC_QUERY_API_ENABLED:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "Programmatic access to this endpoint is paused while a registration process "
+            "is set up. The calendar itself stays open at /api/events/fullcalendar and "
+            "/feeds/events.ics. To ask for access, open an issue at "
+            "https://github.com/triangle-shows/triangle-shows/issues."
+        ),
+    )
+
+
+@router.get("/{event_id}", dependencies=[Depends(require_query_api)])
 async def get_event(
     event_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> EventResponse:
-    """Get a single event by ID.
+    """Get a single event by ID. Gated — see require_query_api.
 
     A row folded into another as a duplicate answers 404 like a row that never existed,
     so "hidden" means hidden on every public path rather than only in the listings. The
@@ -246,6 +291,11 @@ async def get_event(
     /api/events/fullcalendar and the modal renders from what it already has — so the
     only callers are third parties, and leaving a back door to rows an admin has
     suppressed would make the flag advisory.
+
+    That the site does not call this is what makes the gate free today, and it is also
+    what #62's payload split would change: moving the modal's fields here would make this
+    the site's own detail source, at which point the gate needs a same-origin exemption
+    rather than a flat refusal.
     """
     result = await session.execute(
         select(Event)
@@ -313,7 +363,7 @@ def _list_conditions(
     return conditions
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_query_api)])
 async def list_events(
     start: Optional[str] = Query(None),
     end: Optional[str] = Query(None),
