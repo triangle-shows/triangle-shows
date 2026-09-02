@@ -198,6 +198,7 @@ commit is live. That's what [`tools/wait_for_deploy.py`](../tools/wait_for_deplo
 | `ENABLE_SCHEDULER` | `false` | Scraping is driven externally by Cloud Scheduler, not in-process |
 | `ENABLE_STARTUP_SCRAPE` | `false` | See below — a detached task cannot work under this service's CPU allocation |
 | `LOG_LEVEL` | `INFO` | |
+| `PUBLIC_QUERY_API_ENABLED` | unset (`false`) | Closes `GET /api/events` and `GET /api/events/{id}` while API registration is designed (#62). The calendar feed and the iCal feed are unaffected — the site does not use the gated pair |
 | `DATABASE_URL` | secret `triangle-shows-db-url` | |
 | `TICKETMASTER_API_KEY` | secret `triangle-shows-tm-api-key` | |
 | `SCRAPE_ALLOWED_SERVICE_ACCOUNTS` | the scheduler's service account | Gates `POST /api/scrape` — see Origin gates |

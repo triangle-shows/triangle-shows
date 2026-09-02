@@ -25,6 +25,21 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     LOG_LEVEL: str = "INFO"
 
+    # --- Public query API (issue #62) ---
+    # Whether the queryable read endpoints — GET /api/events and GET /api/events/{id} —
+    # answer for anyone. Closed by default while a registration process is designed.
+    #
+    # A flag rather than deleted routes, because this is a policy decision that is meant to
+    # be reversed: when #62 lands, the endpoints come back gated by a key instead of by
+    # this. Deleting them would mean rebuilding the handlers, the schemas and their tests
+    # to reopen something that was only ever meant to be paused.
+    #
+    # Closing these does not stop bulk collection, and should not be mistaken for it.
+    # /api/events/fullcalendar is what the site itself loads, unauthenticated and with no
+    # date bound, so the full dataset stays one request away — see the issue for why the
+    # payload split is the change that would actually raise the cost.
+    PUBLIC_QUERY_API_ENABLED: bool = False
+
     # --- Origin enforcement (see app.tokens) ---
     # The Cloud Run service accepts unauthenticated requests, so its .run.app hostnames
     # reach the app without passing Cloudflare. These settings let the app itself verify
