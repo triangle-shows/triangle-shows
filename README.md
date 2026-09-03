@@ -212,4 +212,4 @@ The formatting, curation, and filtering of the dataset is the property of triang
 The data is available for your own non-competing use; if you use the underlying data, attribute it to triangle-shows.
 You can use words like "powered by triangle-shows" with a link back to the original site or this repo.
 
-Contact me at [@tyfi](https://bsky.app/profile/tyfi.bsky.social) on Bluesky, or you can email [mail@triangle-shows.net](mailto:mail@triangle-shows.net)
+Contact me at [@tyfi](https://bsky.app/profile/tyfi.bsky.social) on Bluesky, or you can email [mail@triangle-shows.net](mailto:mail@triangle-shows.net).
