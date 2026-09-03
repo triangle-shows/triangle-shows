@@ -206,8 +206,10 @@ Functional Source License 1.1 with an Apache 2.0 future license ([FSL-1.1-ALv2](
 Source-available: use, modify and redistribute it for any purpose except competing use, and
 each version becomes Apache 2.0 two years after its release.
 
-The license covers the code. It does not cover the event data the API serves — that is
-aggregated from venues' own public listings and from the Ticketmaster Discovery API, and
-remains the property of the respective venues and rights holders.
+The Functional Source License covers the code. The underlying data that populates the calendar is the property of the original sites.
 
-Contact me at [@tyfi](https://bsky.app/profile/tyfi.bsky.social) on Bluesky, or you can email [mail@triangle-shows.net](mailto:mail@triangle-shows.net)
+The formatting, curation, and filtering of the dataset is the property of triangle-shows.
+The data is available for your own non-competing use; if you use the underlying data, attribute it to triangle-shows.
+You can use words like "powered by triangle-shows" with a link back to the original site or this repo.
+
+Contact me at [@tyfi](https://bsky.app/profile/tyfi.bsky.social) on Bluesky, or you can email [mail@triangle-shows.net](mailto:mail@triangle-shows.net).
