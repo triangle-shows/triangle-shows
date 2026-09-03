@@ -142,7 +142,8 @@ Each venue is handled by one scraper type. Last updated 2026-06-29 — may drift
 | `tribe_events` | The Cave |
 | `venuepilot` | Haw River Ballroom, Rubies on Five Points, Stanczyks |
 | `squarespace` | Neptune's Parlour, Boom Club |
-| `mec` | Shadowbox Studio, Slim's |
+| `mec` | Shadowbox Studio |
+| `arkon_bar_manager` | Slim's |
 | `tickpick_organizer` | Chapel of Bones |
 | `webflow_cms` | Pour House |
 
