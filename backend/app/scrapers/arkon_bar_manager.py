@@ -32,8 +32,7 @@ class ArkonBarManagerScraper(BaseScraper):
             soup = BeautifulSoup(response.text, "lxml")
             calendar = soup.select_one(".abm-calendar")
             if calendar is None:
-                logger.warning("[ABM] Calendar not found for %s", self.venue_slug)
-                return []
+                raise RuntimeError(f"ABM calendar not found for {self.venue_slug}")
 
             events = self._parse_events(calendar, url)
             ajax_url = calendar.get("data-ajax", "")
