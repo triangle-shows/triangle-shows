@@ -350,6 +350,9 @@ class ScrapeManager:
         elif venue.scraper_type == "mec":
             from app.scrapers.mec import MECScraper
             return MECScraper(venue.slug, venue.scraper_config)
+        elif venue.scraper_type == "eventon":
+            from app.scrapers.eventon import EventONScraper
+            return EventONScraper(venue.slug, venue.scraper_config)
         elif venue.scraper_type == "webflow_cms":
             from app.scrapers.webflow_cms import WebflowCMSScraper
             return WebflowCMSScraper(venue.slug, venue.scraper_config)

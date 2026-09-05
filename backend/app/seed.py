@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 #   venuepilot        Haw River Ballroom, Rubies on Five Points, Stanczyks
 #   squarespace       Neptune's Parlour, Boom Club
 #   mec               Shadowbox Studio, Slim's
+#   eventon           Bowstring Brewyard Raleigh
 #   tickpick_organizer Chapel of Bones
 #   webflow_cms       Pour House
 VENUES = [
@@ -264,6 +265,19 @@ VENUES = [
             "base_url": "https://www.pourhouseraleigh.com",
         },
         "color": "#6a3828",  # warm brick (Raleigh)
+    },
+    {
+        "name": "Bowstring Brewyard Raleigh",
+        "slug": "bowstring-brewyard-raleigh",
+        "city": "Raleigh",
+        "capacity": None,
+        "size_category": "small",
+        "website": "https://raleigh.bowstringbrewyard.com/",
+        "scraper_type": "eventon",
+        "scraper_config": {
+            "url": "https://raleigh.bowstringbrewyard.com/live-music-and-events/"
+        },
+        "color": "#80552f",
     },
     {
         "name": "Slim's",
