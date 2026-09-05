@@ -143,6 +143,7 @@ Each venue is handled by one scraper type. Last updated 2026-06-29 — may drift
 | `venuepilot` | Haw River Ballroom, Rubies on Five Points, Stanczyks |
 | `squarespace` | Neptune's Parlour, Boom Club |
 | `mec` | Shadowbox Studio, Slim's |
+| `eventon` | Bowstring Brewyard Raleigh |
 | `tickpick_organizer` | Chapel of Bones |
 | `webflow_cms` | Pour House |
 
