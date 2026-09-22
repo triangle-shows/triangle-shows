@@ -1,0 +1,377 @@
+// Tests for the lineup-poster logic in ../js/lineup.js.
+//
+// Run with:  node --test frontend/tests/lineup.test.js
+// node:test is a Node built-in, so this file needs no package.json and no deps.
+//
+// lineup.js is a plain <script> that touches no browser global at load time — every
+// DOM, canvas and localStorage access sits inside a function — so it evaluates cleanly
+// into a bare vm context and exports its pure half on `Lineup`. The drawing code is not
+// exercised here; what is under test is everything that decides *what* gets drawn.
+//
+// Two of these are regression tests rather than specification:
+//
+// Dates. A favourite is stored as "YYYY-MM-DD" and `new Date("2026-10-16")` parses as
+// UTC midnight, which is 8pm the previous day in this site's own timezone — so the
+// naive implementation puts a Friday show on Thursday's poster and can drop today's
+// show from it entirely. equalizer.js carries the same warning for the same reason.
+//
+// The fifteen-show cap. A longer list is cut to the soonest fifteen, and the poster now
+// says nothing about what it left out, so the cap has to cut from the right end. It also
+// has to be the thing that limits the list: if ROW_MIN ever rises past available/15, the
+// region starts dropping shows the cap meant to keep, which is why the geometry is
+// asserted alongside it.
+
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+
+// Arrays and objects returned by the script are constructed with the vm context's
+// own intrinsics, so deepStrictEqual fails their prototype check even when the
+// contents match. Every assertion below therefore compares primitives.
+const ids = (events) => events.map((e) => e.id).join(",");
+
+const LINEUP_SRC = fs.readFileSync(path.join(__dirname, "../js/lineup.js"), "utf8");
+
+function loadLineup() {
+  const sandbox = {};
+  vm.createContext(sandbox);
+  vm.runInContext(LINEUP_SRC, sandbox);
+  return sandbox.Lineup;
+}
+
+const L = loadLineup();
+
+function fav(id, date, extra = {}) {
+  return { id, date, title: `Show ${id}`, venue_name: "The Pinhook", ...extra };
+}
+
+// A character-count stand-in for ctx.measureText, so truncation can be asserted
+// exactly instead of against whatever a headless canvas would report.
+const measure10 = (s) => s.length * 10;
+
+// ── upcomingFavorites ───────────────────────────────────────────────────────
+
+test("keeps only today and later, soonest first", () => {
+  const favs = {
+    a: fav("a", "2026-10-20"),
+    b: fav("b", "2026-09-30"),
+    c: fav("c", "2026-09-21"),   // today
+    d: fav("d", "2026-09-20"),   // yesterday
+  };
+  assert.equal(ids(L.upcomingFavorites(favs, "2026-09-21")), "c,b,a");
+});
+
+test("today's show is on the poster", () => {
+  // The boundary that the UTC-parsing bug gets wrong: a show tonight is upcoming.
+  const out = L.upcomingFavorites({ a: fav("a", "2026-09-21") }, "2026-09-21");
+  assert.equal(out.length, 1);
+});
+
+test("compares dates as strings, so no Date is constructed from a date-only value", () => {
+  // Late December into January — the case where a UTC shift crosses a year boundary.
+  const favs = { a: fav("a", "2027-01-02"), b: fav("b", "2026-12-31") };
+  assert.equal(ids(L.upcomingFavorites(favs, "2026-12-31")), "b,a");
+});
+
+test("drops entries localStorage should not have produced", () => {
+  // getFavorites() JSON.parses without revalidating, so this has to survive junk.
+  const favs = {
+    ok: fav("ok", "2026-10-01"),
+    nodate: { id: "nodate", title: "No date" },
+    bad: { id: "bad", date: "not-a-date", title: "Bad" },
+    numeric: { id: "numeric", date: 20261001, title: "Number" },
+    nulled: null,
+  };
+  assert.equal(ids(L.upcomingFavorites(favs, "2026-09-21")), "ok");
+});
+
+test("same-night shows get a stable order", () => {
+  const favs = {
+    z: fav("z", "2026-10-16", { title: "Zulu" }),
+    a: fav("a", "2026-10-16", { title: "Alpha" }),
+  };
+  const out = L.upcomingFavorites(favs, "2026-09-21");
+  assert.equal(out.map((e) => e.title).join(","), "Alpha,Zulu");
+});
+
+test("an empty or missing store yields nothing rather than throwing", () => {
+  assert.equal(L.upcomingFavorites({}, "2026-09-21").length, 0);
+  assert.equal(L.upcomingFavorites(null, "2026-09-21").length, 0);
+});
+
+// ── posterEvents ────────────────────────────────────────────────────────────
+
+test("a long list is cut to the soonest MAX_EVENTS", () => {
+  const favs = {};
+  // 20 shows, one a day, added newest first so a cap that trusted insertion order
+  // rather than the sort would keep the wrong end of the list.
+  for (let i = 20; i >= 1; i--) favs["e" + i] = fav("e" + i, `2026-10-${String(i).padStart(2, "0")}`);
+
+  const out = L.posterEvents(favs, "2026-09-21");
+  assert.equal(out.length, L.MAX_EVENTS);
+  assert.equal(out[0].id, "e1", "starts with the soonest");
+  assert.equal(out[L.MAX_EVENTS - 1].id, "e" + L.MAX_EVENTS, "and stops at the cap");
+});
+
+test("a list at or under the cap is left whole", () => {
+  const favs = {};
+  for (let i = 1; i <= L.MAX_EVENTS; i++) favs["e" + i] = fav("e" + i, `2026-10-${String(i).padStart(2, "0")}`);
+
+  assert.equal(L.posterEvents(favs, "2026-09-21").length, L.MAX_EVENTS);
+});
+
+test("one favourite is enough for a poster", () => {
+  // There is no minimum: a single upcoming show gets a poster like any other list.
+  assert.equal(L.posterEvents({ a: fav("a", "2026-10-01") }, "2026-09-21").length, 1);
+});
+
+test("past favourites are left out of the poster list", () => {
+  const favs = { old: fav("old", "2026-01-01"), next: fav("next", "2026-10-01") };
+  const out = L.posterEvents(favs, "2026-09-21");
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, "next");
+});
+
+// ── Fallbacks ───────────────────────────────────────────────────────────────
+//
+// Two drawers defer to a second one when what they need is absent, and neither of those
+// paths runs in ordinary use: drawPhotoRipple falls back to the procedural ripple when
+// img/ripple-matrix.jpg has not loaded, and drawAsciiMasthead falls back to the wordmark
+// when the header carries no art. The first of those is a live production path -- the
+// asset can 404 after a bad deploy, or be blocked, or miss the cache offline. The second
+// currently is not: .ascii-title sits in index.html unconditionally and is only hidden by
+// CSS, so textContent always finds it.
+//
+// Both are worth holding to account anyway, and these are the only tests that touch the
+// drawing code at all. A recording canvas stands in for the real one, so what is asserted
+// is which calls were made rather than what any of it looked like.
+
+function recordingCtx() {
+  const calls = [];
+  return {
+    calls,
+    // Written to by the drawers; kept as plain properties so assignment just works.
+    font: "", fillStyle: "", strokeStyle: "", lineWidth: 0, lineJoin: "", miterLimit: 0,
+    textBaseline: "", textAlign: "", letterSpacing: "", globalAlpha: 1,
+    save() { calls.push(["save"]); },
+    restore() { calls.push(["restore"]); },
+    beginPath() { calls.push(["beginPath"]); },
+    fill() { calls.push(["fill"]); },
+    rect(...a) { calls.push(["rect", ...a]); },
+    arc(...a) { calls.push(["arc", ...a]); },
+    fillRect(...a) { calls.push(["fillRect", ...a]); },
+    fillText(t, x, y) { calls.push(["fillText", t, x, y]); },
+    strokeText(t, x, y) { calls.push(["strokeText", t, x, y]); },
+    // Monospace at a 0.6 advance ratio, read off the font string, which is close enough
+    // to Space Mono that the geometry below comes out at the real numbers.
+    measureText(str) {
+      const px = /(\d+(?:\.\d+)?)px/.exec(this.font);
+      return { width: String(str).length * (px ? Number(px[1]) : 16) * 0.6 };
+    },
+  };
+}
+
+const THEME = {
+  bg: "#1a1008", surface: "#241609", border: "#3d2a12",
+  text: "#e8d5b0", muted: "#9a7a50", accent: "#c87941",
+};
+
+const of = (ctx, name) => ctx.calls.filter((c) => c[0] === name);
+
+test("with no photograph loaded, the background still draws something", () => {
+  // ensureAssets() has never run here -- there is no Image in a bare vm context -- so
+  // the module's cached photo is null and this must take the procedural path. It also
+  // has to do so without touching the DOM, which is why the fallback is checked before
+  // the offscreen canvas the photo path needs.
+  const ctx = recordingCtx();
+  L.drawPhotoRipple(ctx, THEME);
+
+  const pins = of(ctx, "rect");
+  assert.ok(pins.length > 500, `drew ${pins.length} pins, expected a full field`);
+  assert.equal(of(ctx, "fill").length, 1, "one batched fill, not one per pin");
+  assert.equal(ctx.fillStyle, THEME.accent);
+});
+
+test("the fallback background keeps its pins on the page", () => {
+  const ctx = recordingCtx();
+  L.drawPhotoRipple(ctx, THEME);
+  const pins = of(ctx, "rect");
+  assert.ok(pins.length > 0, "nothing was drawn, so the bounds below prove nothing");
+  for (const [, x, y] of pins) {
+    assert.ok(x >= 0 && x <= 1080, `pin x=${x} off the page`);
+    assert.ok(y >= 0 && y <= 1350, `pin y=${y} off the page`);
+  }
+});
+
+test("with no art in the header, the masthead falls back to the wordmark", () => {
+  const ctx = recordingCtx();
+  const bottom = L.drawAsciiMasthead(ctx, THEME, { wordmark: "durm-shows", banner: [] });
+
+  const drawn = of(ctx, "fillText");
+  assert.equal(drawn.length, 1, "the wordmark is one string, not one call per character");
+  assert.equal(drawn[0][1], "durm-shows", "and it is the name the page carries");
+  assert.match(ctx.font, /Orbitron/, "set in the site's logo face");
+  assert.ok(bottom > 52, "and it reports a bottom for the heading to measure from");
+});
+
+test("with art in the header, the masthead draws it character by character", () => {
+  const ctx = recordingCtx();
+  const banner = [" __  _", "/ _\| |", "\__/|_|"];
+  L.drawAsciiMasthead(ctx, THEME, { wordmark: "triangle-shows", banner });
+
+  const drawn = of(ctx, "fillText");
+  // Every non-space character, and nothing else: spaces are skipped rather than drawn.
+  const expected = banner.join("").replace(/ /g, "").length;
+  assert.equal(drawn.length, expected);
+  assert.ok(drawn.every((c) => c[1].length === 1), "one character per call");
+  assert.ok(!drawn.some((c) => c[1] === "triangle-shows"), "the wordmark is not drawn");
+});
+
+test("the banner is placed on whole pixels, inside the frame", () => {
+  // The two things the grid drawer exists for. The frame is stroked at PAD/2 with a 2px
+  // pen, so its inner edge runs from x=33 to x=1047.
+  const ctx = recordingCtx();
+  const line = "#".repeat(90);           // the real banner's width
+  L.drawAsciiMasthead(ctx, THEME, { wordmark: "triangle-shows", banner: [line, line] });
+
+  const drawn = of(ctx, "fillText");
+  assert.ok(drawn.length > 100, `drew ${drawn.length} characters, expected the banner`);
+  for (const [, , x, y] of drawn) {
+    assert.equal(x, Math.round(x), `x=${x} is not a whole pixel`);
+    assert.equal(y, Math.round(y), `y=${y} is not a whole pixel`);
+  }
+  const xs = drawn.map((c) => c[2]);
+  assert.ok(Math.min(...xs) >= 33, `art starts at ${Math.min(...xs)}, inside the frame`);
+  assert.ok(Math.max(...xs) <= 1047, `art ends at ${Math.max(...xs)}, inside the frame`);
+  // Wider than the text column: running out to the frame is what buys the character
+  // cell its eleventh pixel, and losing that is the regression to catch.
+  assert.ok(Math.min(...xs) < 64, "the banner overhangs the text column, as intended");
+});
+
+// ── formatPosterDate ────────────────────────────────────────────────────────
+
+test("reads the weekday in local time", () => {
+  // 16 October 2026 is a Friday. Parsed as UTC it is Thursday evening here.
+  const out = L.formatPosterDate("2026-10-16");
+  assert.equal(out.day, "FRI");
+  assert.equal(out.date, "10.16");
+});
+
+test("pads the day but not the month", () => {
+  assert.equal(L.formatPosterDate("2027-01-02").date, "1.02");
+});
+
+// ── planLayout ──────────────────────────────────────────────────────────────
+
+const TOP = 328;
+const BOTTOM = 1240;          // the real region, ~912px tall
+const AVAILABLE = BOTTOM - TOP;
+
+test("a list shorter than the reference is laid out as if it were that long", () => {
+  // The visitor-facing promise: a one-favourite poster is the five-favourite poster
+  // with four rows missing, not one row stretched over the whole page.
+  const one = L.planLayout(1, TOP, BOTTOM);
+  const five = L.planLayout(L.REF_ROWS, TOP, BOTTOM);
+
+  assert.equal(one.visible, 1);
+  assert.equal(one.rowHeight, five.rowHeight, "same row height");
+  assert.equal(one.blockTop, five.blockTop, "and the first row in the same place");
+  assert.equal(one.rowHeight, L.ROW_MAX, "which is the top of the scale");
+});
+
+test("type is the same size on every poster up to the reference length", () => {
+  const sizeAt = (n) => JSON.stringify(L.rowTypeScale(L.planLayout(n, TOP, BOTTOM).rowHeight));
+  const five = sizeAt(L.REF_ROWS);
+  for (const n of [1, 2, 3, 4]) {
+    assert.equal(sizeAt(n), five, `a ${n}-show poster is set differently from a five-show one`);
+  }
+});
+
+test("rows tighten as the list grows past the reference, down to the floor", () => {
+  const few = L.planLayout(6, TOP, BOTTOM);
+  const many = L.planLayout(L.MAX_EVENTS, TOP, BOTTOM);
+  assert.ok(many.rowHeight < few.rowHeight);
+  assert.ok(many.rowHeight >= L.ROW_MIN);
+});
+
+test("a full fifteen fit, so the cap is what limits the list and not the page", () => {
+  // If this fails the poster is dropping shows the cap meant to keep: ROW_MIN has grown
+  // past available/MAX_EVENTS, or the region above the footer has shrunk.
+  const plan = L.planLayout(L.MAX_EVENTS, TOP, BOTTOM);
+  assert.equal(plan.visible, L.MAX_EVENTS);
+  assert.ok(L.MAX_EVENTS * L.ROW_MIN <= AVAILABLE,
+    `${L.MAX_EVENTS} rows at ROW_MIN=${L.ROW_MIN} need ${L.MAX_EVENTS * L.ROW_MIN}px of ${AVAILABLE}`);
+});
+
+test("rows never overflow the region they were given", () => {
+  // Past MAX_EVENTS is the caller's mistake, not a crash: the guard clamps instead.
+  for (const n of [1, 2, 5, 10, 15, 16, 40, 200]) {
+    const plan = L.planLayout(n, TOP, BOTTOM);
+    const bottom = plan.blockTop + plan.visible * plan.rowHeight;
+    assert.ok(bottom <= BOTTOM + 0.001, `n=${n} ran past the footer (${bottom} > ${BOTTOM})`);
+    assert.ok(plan.blockTop >= TOP - 0.001, `n=${n} started above the region`);
+  }
+});
+
+test("a region too short for the list drops rows rather than crushing them", () => {
+  const plan = L.planLayout(15, TOP, TOP + 200);
+  assert.ok(plan.visible < 15);
+  assert.ok(plan.rowHeight >= L.ROW_MIN);
+});
+
+// ── truncateToWidth ─────────────────────────────────────────────────────────
+
+test("text that fits is left exactly as it is", () => {
+  assert.equal(L.truncateToWidth(measure10, "Short", 100), "Short");
+});
+
+test("text that does not fit is cut and given an ellipsis", () => {
+  const out = L.truncateToWidth(measure10, "A very long artist name indeed", 100);
+  assert.ok(out.endsWith("…"));
+  assert.ok(measure10(out) <= 100, `"${out}" is still wider than the column`);
+});
+
+test("the ellipsis does not hang off a space", () => {
+  const out = L.truncateToWidth(measure10, "Alpha Beta Gamma", 70);
+  assert.ok(!out.includes(" …"), `got "${out}"`);
+});
+
+test("empty input draws nothing", () => {
+  assert.equal(L.truncateToWidth(measure10, "", 100), "");
+  assert.equal(L.truncateToWidth(measure10, null, 100), "");
+  assert.equal(L.truncateToWidth(measure10, undefined, 100), "");
+});
+
+test("a column too narrow for even one character still returns something drawable", () => {
+  assert.equal(L.truncateToWidth(measure10, "Wide", 5), "…");
+});
+
+// ── metaLine ────────────────────────────────────────────────────────────────
+
+test("venue, city and time are joined", () => {
+  const line = L.metaLine({ venue_name: "The Pinhook", venue_city: "Durham", show_time: "8:00 PM" });
+  assert.equal(line, "The Pinhook  ·  Durham  ·  8:00 pm");
+});
+
+test("absent fields leave no dangling separator", () => {
+  assert.equal(L.metaLine({ venue_name: "Kings" }), "Kings");
+  assert.equal(L.metaLine({ venue_name: "Kings", show_time: "9:00 PM" }), "Kings  ·  9:00 pm");
+  assert.equal(L.metaLine({}), "");
+});
+
+// ── posterFilename ──────────────────────────────────────────────────────────
+
+test("the filename carries the date it was made", () => {
+  assert.equal(L.posterFilename("2026-09-21"), "my-triangle-shows-2026-09-21.png");
+});
+
+// ── todayKey ────────────────────────────────────────────────────────────────
+
+test("todayKey is the local date, not the UTC one", () => {
+  // 1 Jan 2027 at 20:00 local is already 2 Jan in UTC for this site's timezone, so a
+  // toISOString()-based key would report tomorrow and hide tonight's show.
+  const localEvening = new Date(2027, 0, 1, 20, 0, 0);
+  assert.equal(L.todayKey(localEvening), "2027-01-01");
+});

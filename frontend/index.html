@@ -160,6 +160,8 @@
     <button class="btn-favorites-only" id="btn-favorites-only" aria-pressed="false"
             onclick="toggleFavoritesOnly()">♡ only my shows</button>
     <button class="btn-download-shows" onclick="downloadFavorites()">↓ download my shows</button>
+    <button class="btn-lineup-graphic" id="btn-lineup-graphic"
+            onclick="makeLineupPoster()">▣ share a poster</button>
     <button class="btn-restore-hidden" id="btn-restore-hidden" onclick="restoreHidden()">↺ restore hidden</button>
   </div>
 
@@ -179,6 +181,7 @@
   <script defer src="/js/config.js?v={{ASSET_VERSION}}"></script>
   <script defer src="/js/filters.js?v={{ASSET_VERSION}}"></script>
   <script defer src="/js/modal.js?v={{ASSET_VERSION}}"></script>
+  <script defer src="/js/lineup.js?v={{ASSET_VERSION}}"></script>
   <script defer src="/js/favorites.js?v={{ASSET_VERSION}}"></script>
   <script defer src="/js/app.js?v={{ASSET_VERSION}}"></script>
 </body>

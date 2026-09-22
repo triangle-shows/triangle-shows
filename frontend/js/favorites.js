@@ -147,6 +147,19 @@ function updateBottomBar() {
     onlyBtn.setAttribute("aria-pressed", favOnly ? "true" : "false");
   }
 
+  // Poster button. Counted over *upcoming* favourites rather than all of them: the
+  // poster only shows shows that have not happened yet, so a visitor whose favourites
+  // are all in the past would otherwise be offered a button that renders nothing.
+  const posterBtn = document.getElementById("btn-lineup-graphic");
+  if (posterBtn) {
+    const upcoming = (window.Lineup
+      ? window.Lineup.upcomingFavorites(getFavorites(), window.Lineup.todayKey())
+      : []
+    ).length;
+    posterBtn.style.display = upcoming > 0 ? "" : "none";
+    posterBtn.textContent = `▣ share a poster (${upcoming})`;
+  }
+
   const restoreBtn = document.getElementById("btn-restore-hidden");
   if (restoreBtn) {
     restoreBtn.style.display = hidCount > 0 ? "" : "none";
