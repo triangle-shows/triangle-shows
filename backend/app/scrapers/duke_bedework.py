@@ -1,10 +1,11 @@
 """
 Scraper for Duke's university calendar, which runs Bedework and publishes a real feed.
 
-`calendar.duke.edu` takes a `format` parameter alongside its topic filter, so the Arts
-listing is available as JSON without parsing any HTML:
+`calendar.duke.edu` takes a `format` parameter alongside its filters, so its listings
+are available as JSON without parsing any HTML. Two are read and unioned:
 
     https://calendar.duke.edu/index?topic=Arts&format=json
+    https://calendar.duke.edu/index?cf%5B%5D=Concert%2FMusic&format=json
 
 Do not scrape `arts.duke.edu`, which is the obvious place to start. Its WordPress `event`
 post type carries **no event date** — the `date` field is the post date — and there is no
@@ -21,13 +22,18 @@ Two properties of the feed shape everything below.
 the identical 40, and `start` is ignored rather than honoured, so it cannot be paged
 either. There is no `/feeder/` application deployed.
 
-Because the 40 are spent on everything the Arts topic covers — film screenings,
-exhibitions, dance classes, talks — the forward reach is short. Measured 2026-09-22 the
-window ran 10 June to 1 October: 39 upcoming events and **nine days** of lookahead. The
-narrower `cf[]=Concert/Music` filter reached 23 days on the same day but carried only
-music, and the two overlap by just 7 of 40 guids, so neither contains the other. This
-row follows the Arts topic because the venue is Duke Arts; if the horizon matters more
-than the breadth, that filter is one URL away.
+**Which is why there are two of them.** Each filter gets its own 40, and neither
+contains the other: measured 2026-09-22 they shared just 7 guids. The Arts topic spends
+its budget on film screenings, exhibitions, dance classes and talks and reached only
+nine days ahead; Concert/Music reached twenty-three but carried no film or dance, and
+left out nothing musical. Following Arts alone would have dropped eight concerts,
+VOCES8 and the Duke Symphony Orchestra centenary among them.
+
+So both are read and unioned on external_id, which is the feed's own identifier and
+dedupes the overlap exactly. Measured 2026-09-22 that was 80 raw records collapsing to
+64 events -- the 7 shared guids are 16 shared instances once recurrences are counted --
+with the longer of the two windows, 23 days. Adding a third filter is one entry in
+FEED_URLS.
 
 **One feed serves many venues.** The 40 events are spread over eighteen rooms — Duke
 Chapel, six separate spaces inside the Rubenstein Arts Center, Page Auditorium, Smith
@@ -43,7 +49,7 @@ triggered every 6 hours via POST /api/scrape (Cloud Scheduler or internal APSche
 Requires: The venue row must exist in the DB (seeded on startup) with either
           scraper_config = {"location_uids": ["<uid>", ...]}  — claims those locations
           or     scraper_config = {"catch_all": true, "exclude_uids": [...]}  — takes
-          the rest. No API key.
+          the rest. Either may add "feeds": [...] to override FEED_URLS. No API key.
 """
 
 # --- Imports ---
@@ -51,7 +57,7 @@ import asyncio
 import logging
 import time
 from datetime import date, datetime, time as time_of_day
-from typing import Any, Optional
+from typing import Optional
 
 import httpx
 
@@ -61,39 +67,42 @@ from app.scrapers.base import BaseScraper, ScrapedEvent, BROWSER_HEADERS
 
 logger = logging.getLogger(__name__)
 
-FEED_URL = "https://calendar.duke.edu/index?topic=Arts&format=json"
+# Read in order, and the first feed to carry an event wins the tie. Both describe the
+# same events identically where they overlap, so the order is about determinism rather
+# than preference.
+FEED_URLS = (
+    "https://calendar.duke.edu/index?topic=Arts&format=json",
+    "https://calendar.duke.edu/index?cf%5B%5D=Concert%2FMusic&format=json",
+)
 EVENT_URL = "https://calendar.duke.edu/show?fq=id:{guid}"
 
 # How long a fetched feed may be reused. The manager scrapes venues one after another
-# within a cycle, so every Duke row in a single run shares one fetch; a cycle is six
-# hours apart, far outside this, so each cycle fetches fresh.
+# within a cycle, so every Duke row in a single run shares one fetch per feed; a cycle
+# is six hours apart, far outside this, so each cycle fetches fresh.
 FEED_TTL_SECONDS = 120
 
-_feed_cache: dict[str, Any] = {"at": 0.0, "events": None}
+# Keyed by URL, because there is more than one feed and they must not shadow each other.
+_feed_cache: dict[str, tuple[float, list[dict]]] = {}
 _feed_lock = asyncio.Lock()
 
 
 def _reset_feed_cache() -> None:
-    """Drop the shared feed. For tests, which must not inherit each other's fetches."""
-    _feed_cache["at"] = 0.0
-    _feed_cache["events"] = None
+    """Drop every cached feed. For tests, which must not inherit each other's fetches."""
+    _feed_cache.clear()
 
 
 # --- Feed access ---
 
 async def _fetch_feed(url: str) -> list[dict]:
-    """The feed's event objects, fetched at most once per FEED_TTL_SECONDS.
+    """One feed's event objects, fetched at most once per FEED_TTL_SECONDS.
 
     The lock matters even though the manager is sequential today: two Duke venues
     scraped concurrently would otherwise both miss the cache and both fetch.
     """
     async with _feed_lock:
-        fresh = (
-            _feed_cache["events"] is not None
-            and (time.monotonic() - _feed_cache["at"]) < FEED_TTL_SECONDS
-        )
-        if fresh:
-            return _feed_cache["events"]
+        cached = _feed_cache.get(url)
+        if cached and (time.monotonic() - cached[0]) < FEED_TTL_SECONDS:
+            return cached[1]
 
         async with httpx.AsyncClient(
             timeout=30, follow_redirects=True, headers=BROWSER_HEADERS
@@ -103,10 +112,27 @@ async def _fetch_feed(url: str) -> list[dict]:
             payload = resp.json()
 
         events = [e["event"] for e in payload.get("events", []) if isinstance(e, dict) and "event" in e]
-        _feed_cache["events"] = events
-        _feed_cache["at"] = time.monotonic()
-        logger.info(f"[DukeBedework] fetched {len(events)} events from the Concert/Music feed")
+        _feed_cache[url] = (time.monotonic(), events)
+        logger.info(f"[DukeBedework] fetched {len(events)} events from {url}")
         return events
+
+
+async def _fetch_union(urls) -> list[dict]:
+    """Every feed's events, with the overlap removed.
+
+    Deduped on external_id, which is the feed's own identifier for one instance of one
+    event, so the same show appearing under two filters collapses exactly rather than
+    approximately. An event with no guid -- none seen so far -- falls back to its title
+    and start, which is the same pair ScrapedEvent.hash would end up leaning on.
+    """
+    seen: dict = {}
+    for url in urls:
+        for raw in await _fetch_feed(url):
+            key = external_id(raw) or (
+                raw.get("summary"), (raw.get("start") or {}).get("unformatted")
+            )
+            seen.setdefault(key, raw)
+    return list(seen.values())
 
 
 # --- Field helpers ---
@@ -231,7 +257,12 @@ class DukeBedeworkScraper(BaseScraper):
     """
 
     async def scrape(self) -> list[ScrapedEvent]:
-        url = self.config.get("url") or FEED_URL
+        # `feeds` overrides the pair above; `url` is the single-feed form, kept because
+        # a row that wants one filter should not have to write a list to say so.
+        urls = self.config.get("feeds")
+        if not urls:
+            single = self.config.get("url")
+            urls = [single] if single else list(FEED_URLS)
         claimed = set(self.config.get("location_uids") or [])
         catch_all = bool(self.config.get("catch_all"))
         excluded = set(self.config.get("exclude_uids") or [])
@@ -242,7 +273,7 @@ class DukeBedeworkScraper(BaseScraper):
                 "the catch_all row, so it would claim nothing."
             )
 
-        raw_events = await _fetch_feed(url)
+        raw_events = await _fetch_union(urls)
 
         events: list[ScrapedEvent] = []
         rooms: dict[str, int] = {}

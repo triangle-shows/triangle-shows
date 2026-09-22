@@ -80,10 +80,16 @@ def feed(monkeypatch):
     current = [list(FEED)]
 
     async def fake(url):
-        return list(current[0])
+        served = current[0]
+        # A dict serves a different list per URL, which is what the union needs; a plain
+        # list serves the same one whatever is asked for, which is what everything else
+        # wants.
+        if isinstance(served, dict):
+            return list(served.get(url, []))
+        return list(served)
 
     monkeypatch.setattr(duke, "_fetch_feed", fake)
-    yield lambda events: current.__setitem__(0, list(events))
+    yield lambda events: current.__setitem__(0, events if isinstance(events, dict) else list(events))
     duke._reset_feed_cache()
 
 
@@ -283,3 +289,93 @@ def test_the_status_check_is_not_case_sensitive():
     assert event_status({"status": " CANCELLED "}) == "cancelled"
     assert event_status({"status": "CONFIRMED"}) == "on_sale"
     assert event_status({}) == "on_sale"
+
+
+# --- The union ----------------------------------------------------------------
+#
+# Neither Duke filter contains the other. Measured 2026-09-22 the Arts topic and
+# Concert/Music shared only 7 of 40 guids: Arts carried film, dance and exhibitions and
+# reached nine days ahead, Concert/Music reached twenty-three and carried eight concerts
+# Arts left out, including VOCES8 and the Duke Symphony Orchestra centenary. Reading one
+# means losing the other, so both are read.
+
+ARTS = "https://calendar.duke.edu/index?topic=Arts&format=json"
+MUSIC = "https://calendar.duke.edu/index?cf%5B%5D=Concert%2FMusic&format=json"
+
+
+def test_both_feeds_are_read_by_default():
+    """FEED_URLS is the pair, and a row that names neither gets both."""
+    assert len(duke.FEED_URLS) == 2
+    assert any("topic=Arts" in u for u in duke.FEED_URLS)
+    assert any("Concert" in u for u in duke.FEED_URLS)
+
+
+def test_events_from_either_feed_arrive(feed):
+    only_arts = _raw("A Film Screening", CHAPEL, "Duke Chapel",
+                     "20260924T190000", "20260924T230000Z", "CAL-film")
+    only_music = _raw("VOCES8", BALDWIN, "Baldwin Auditorium",
+                      "20260925T200000", "20260926T000000Z", "CAL-voces8")
+    feed({ARTS: [only_arts], MUSIC: [only_music]})
+
+    names = {e.name for e in run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())}
+    assert names == {"A Film Screening", "VOCES8"}
+
+
+def test_an_event_in_both_feeds_appears_once(feed):
+    """The seven-guid overlap. external_id is the feed's own identifier for one instance
+    of one event, so the collapse is exact rather than approximate."""
+    shared = _raw("Organ Demonstration", CHAPEL, "Duke Chapel",
+                  "20260922T130000", "20260922T170000Z", "CAL-organ", "20260922T170000Z")
+    feed({ARTS: [shared], MUSIC: [dict(shared)]})
+
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
+    assert len(events) == 1
+
+
+def test_a_recurring_series_is_not_collapsed_by_the_union(feed):
+    """Two instances share a guid and differ only by recurrence id. Deduping on the guid
+    alone would leave one night of a weekly series."""
+    feed({ARTS: list(FEED), MUSIC: list(FEED)})
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
+    recitals = [e for e in events if e.name == "Weekday Carillon Recital"]
+    assert len(recitals) == 2
+
+
+def test_an_event_with_no_guid_still_dedupes(feed):
+    """No feed record has been seen without one, but the fallback must not multiply the
+    event across feeds if that changes."""
+    bare = _raw("Unidentified", CHAPEL, "Duke Chapel",
+                "20260924T190000", "20260924T230000Z", "")
+    feed({ARTS: [bare], MUSIC: [dict(bare)]})
+
+    assert len(run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())) == 1
+
+
+def test_a_row_can_name_its_own_feeds(feed):
+    feed({ARTS: list(FEED), MUSIC: [_raw("Music Only", BALDWIN, "Baldwin Auditorium",
+                                         "20260925T200000", "20260926T000000Z", "CAL-m")]})
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True, "feeds": [MUSIC]}).scrape())
+    assert {e.name for e in events} == {"Music Only"}
+
+
+def test_the_single_url_form_still_works(feed):
+    feed({ARTS: list(FEED), MUSIC: [_raw("Music Only", BALDWIN, "Baldwin Auditorium",
+                                         "20260925T200000", "20260926T000000Z", "CAL-m")]})
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True, "url": MUSIC}).scrape())
+    assert {e.name for e in events} == {"Music Only"}
+
+
+def test_the_cache_does_not_let_one_feed_shadow_another(monkeypatch):
+    """The cache was a single slot before there were two feeds; keyed by URL it must
+    hand each one back its own events."""
+    duke._reset_feed_cache()
+    calls = []
+
+    async def fake_get(url):
+        calls.append(url)
+        return [{"summary": url, "guid": url, "start": {"unformatted": "20260924T190000"}}]
+
+    monkeypatch.setattr(duke, "_fetch_feed", fake_get)
+    out = run(duke._fetch_union([ARTS, MUSIC]))
+    assert [e["summary"] for e in out] == [ARTS, MUSIC]
+    assert calls == [ARTS, MUSIC]
