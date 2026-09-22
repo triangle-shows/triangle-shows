@@ -7,13 +7,24 @@ are available as JSON without parsing any HTML. Two are read and unioned:
     https://calendar.duke.edu/index?topic=Arts&format=json
     https://calendar.duke.edu/index?cf%5B%5D=Concert%2FMusic&format=json
 
-Do not scrape `arts.duke.edu`, which is the obvious place to start. Its WordPress `event`
-post type carries **no event date** — the `date` field is the post date — and there is no
-schema.org Event on the page either, so there is nothing structured to read and its own
-cards link out to calendar.duke.edu anyway. It does list further ahead than this feed
-does (37 events reaching 21 October when measured on 2026-09-22), so if the horizon below
-ever becomes the binding problem it is worth revisiting as an HTML scrape — but it is a
-presentation layer over this calendar, not a second source. See issue #23.
+`arts.duke.edu/events/` is a *different* view of the same calendar and is worth reading
+too, though not here — see issue #23 and the draft that follows this one.
+
+An earlier version of this comment said not to scrape it, on two grounds that do not hold.
+The first was a bad measurement: it counted `calendar.duke.edu` links in the page and found
+37, when the page carries 85 `article.post-event` cards and most do not link out that way.
+The second was that the page has no structured dates, which is true of its WordPress REST
+API and false of the rendered page, where `.event-date-alt` carries one per card.
+
+Measured 2026-09-22 the page held 85 cards over 30 days — 67 distinct titles against 35
+from both feeds here, with 48 titles these feeds do not carry at all, among them An Evening
+with Fran Lebowitz and A Conversation with David Rubenstein & Ken Burns. Its `data-post-id`
+is distinct per occurrence, so it has a usable external_id, and its cards link back to the
+same guids these feeds use, so the two sources dedupe against each other.
+
+What is true is that it costs more to read: the dates carry no year (0 of 81), the listing
+mixes in lectures and workshops, and it is HTML rather than a documented feed. That makes
+it a third source to add rather than a replacement for these two.
 
 Two properties of the feed shape everything below.
 
