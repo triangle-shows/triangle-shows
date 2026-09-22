@@ -36,21 +36,6 @@
   const LIST_BOTTOM = H - 110;
   const SIGNOFF_BASELINE = H - 64;   // in the margin the list leaves below itself
 
-  // --- Mastheads ---
-  // Two treatments of the site's name, kept side by side while the choice is open, the
-  // same way the backgrounds below are. MASTHEAD names the one the site ships.
-  //
-  //   ascii-grid -- the six-line ASCII banner from the desktop header, snapped to a
-  //                 whole-pixel character grid. What the site ships.
-  //   ascii      -- the same art drawn as strings, off the grid.
-  //   ascii-400  -- and at the original lighter weight.
-  //   wordmark   -- the logo the site shows on narrow screens, set in its own face.
-  //                 Still the fallback when the header carries no art, whatever is set
-  //                 here, because the ASCII drawers defer to it when site.banner is [].
-  //
-  // The harness renders all of them.
-  const MASTHEAD = "ascii-grid";
-
   // How many shows a poster will ever list. Past fifteen the rows are too tight to read
   // at a glance, which is the only thing a poster is for, so a longer list is cut to the
   // fifteen soonest and the footer says so rather than being crushed to fit.
@@ -70,29 +55,6 @@
   const DATE_COL = 168;        // "FRI 10.16" plus breathing room
   const RULE_W = 4;            // venue-coloured gutter rule, as on the calendar tiles
   const RULE_GAP = 22;
-
-  // --- Backgrounds ---
-  // Two treatments, kept side by side while the choice between them is open. BACKGROUND
-  // names the one the site ships; .claude/poster-harness.html renders both against every
-  // interesting list length so they can be compared rather than argued about.
-  // photo is what ships. Note that it depends on an asset: drawPhotoRipple falls back
-  // to the procedural ripple when img/ripple-matrix.jpg has not loaded, so that one
-  // cannot be removed while this is the default.
-  const BACKGROUND = "photo";
-
-  // Halftone screen.
-  // A print-style dot gradient bleeding off the bottom edge, the way a screen-printed
-  // poster shades flat ink. The ramp is carried by dot *size* rather than opacity,
-  // which is what makes it read as a halftone screen and not as a soft shadow.
-  //
-  // The dots sit on concentric rings struck from the bottom centre of the page rather
-  // than on a square lattice. A lattice reads as a grid -- the eye picks out its rows,
-  // columns and diagonals at once, and the diagonals fight the ruled horizontals the
-  // rest of the poster is built from. Rings have no straight line in them to find.
-  const DOT_PITCH = 11;      // ring spacing, and the arc between dots along a ring
-  const DOT_MAX_R = 2.9;      // radius at the very bottom of the page
-  const DOT_START = 0.46;     // fraction down the page where the screen begins
-  const DOT_ALPHA = 0.34;     // opacity at full size, so rows over it still read
 
   // Ripple matrix.
   // A two-tone background: every cell of a very fine grid is either ink or paper with
@@ -420,66 +382,6 @@
   // --- Rendering ---
 
   /**
-   * The halftone gradient, drawn straight after the background and under everything
-   * else.
-   *
-   * Rings are struck from the bottom-left corner, and two details keep them from
-   * looking mechanical. The number of dots on a ring comes from its circumference, so
-   * the spacing along every ring is the same instead of fanning out with radius. And
-   * each ring is turned half a step against the one inside it -- without that the dots
-   * line up radially and the screen grows spokes, which is a worse artefact than the
-   * grid this replaced.
-   *
-   * The dots are still *sized* by how far down the page they fall, not by their radius
-   * from the centre. Sizing them radially turns the screen into a glow around one point;
-   * this keeps the even bottom-up bleed and puts the rings only in the arrangement.
-   */
-  function drawHalftoneRings(ctx, theme) {
-    // The bottom-left corner. Striking the rings from a corner rather than from the
-    // middle of an edge means no ring closes inside the page: every one crosses it as a
-    // single sweep, which is a quieter figure than a target centred on the margin.
-    const cx = 0;
-    const cy = H;
-    const startY = H * DOT_START;
-    const span = H - startY;
-    // Far enough out to reach the opposite top corner of the inked band. Short of that
-    // the screen would fade along an arc instead of along the line DOT_START names.
-    const rMax = Math.hypot(W, span);
-
-    ctx.save();
-    ctx.fillStyle = theme.accent;
-    for (let ring = 1, radius = DOT_PITCH; radius <= rMax; ring++, radius += DOT_PITCH) {
-      const count = Math.round((2 * Math.PI * radius) / DOT_PITCH);
-      const step = (2 * Math.PI) / count;
-      const phase = ring * step * 0.5;
-
-      for (let i = 0; i < count; i++) {
-        const angle = phase + i * step;
-        const y = cy + radius * Math.sin(angle);
-        // Most of each ring is below the page or above the screen; the band is the only
-        // part worth drawing.
-        if (y > H || y < startY) continue;
-        const x = cx + radius * Math.cos(angle);
-        if (x < -DOT_MAX_R || x > W + DOT_MAX_R) continue;   // bleeds past the edge
-
-        // Squared ramp. A linear one draws a visible line across the page where the
-        // dots start, because the smallest dot on an empty field is easy to pick out.
-        const t = (y - startY) / span;
-        const r = DOT_MAX_R * t * t;
-        if (r < 0.2) continue;
-        // Below about a pixel across a dot is an anti-aliased smudge whose size no
-        // longer reads as size; fading those in is what keeps the low end of the
-        // gradient smooth instead of speckled.
-        ctx.globalAlpha = DOT_ALPHA * Math.min(1, r);
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-    ctx.restore();
-  }
-
-  /**
    * The ripple matrix, drawn in the same place and to the same purpose as the halftone.
    *
    * Two-tone leaves no opacity or dot size to modulate, so the fade toward the top of
@@ -575,14 +477,6 @@
     ctx.restore();
   }
 
-  // Named so renderPoster and the harness can ask for one without either of them
-  // holding a reference to a particular treatment.
-  const BACKGROUNDS = {
-    halftone: drawHalftoneRings,
-    ripple: drawRippleMatrix,
-    photo: drawPhotoRipple,
-  };
-
   /**
    * Draw text with a background-coloured outline laid down first.
    *
@@ -607,57 +501,20 @@
   }
 
   /**
-   * The ASCII masthead: the banner the desktop header carries, fitted to the page.
+   * The masthead: the header's ASCII banner, snapped to a whole-pixel character grid.
    *
-   * Falls back to the wordmark when the header is absent, so this never draws nothing.
-   */
-  function drawAsciiMasthead(ctx, theme, site, weight) {
-    const lines = site.banner;
-    const widest = lines.reduce((n, l) => Math.max(n, l.length), 0);
-    if (!widest) return drawWordmarkMasthead(ctx, theme, site);
-
-    // Measure at a known size and scale, rather than assuming Space Mono's advance
-    // ratio -- if the face was substituted, this still fits the width.
-    ctx.font = '400 100px "Space Mono", monospace';
-    const charAt100 = ctx.measureText("M").width || 60;
-    const band = W - ASCII_INSET * 2;
-    const size = Math.floor((band / widest) * (100 / charAt100));
-    // Centred in the band rather than hung off its left edge: once the art is wider
-    // than the text column it reads as a masthead in its own right, and an even
-    // overhang on both sides looks deliberate where a single-sided one looks misaligned.
-    const x0 = Math.round((W - widest * ((size * charAt100) / 100)) / 2);
-    // Looser than .ascii-title's 1.22 in styles.css. The art is drawn in slashes and
-    // underscores, and at poster scale those strokes close up the gap between rows and
-    // read as one grey band; the extra leading is what keeps the banner legible.
-    const lineHeight = size * 1.35;
-
-    ctx.font = `${weight || 700} ${size}px "Space Mono", monospace`;
-    ctx.fillStyle = theme.accent;
-    ctx.textBaseline = "top";
-    // Rounded to whole pixels. lineHeight is fractional (17 * 1.35 = 22.95), so an
-    // unrounded baseline puts most rows off the pixel grid, and every horizontal stroke
-    // in the art then gets anti-aliased across two rows of pixels. At this size -- about
-    // ten pixels per character -- that soft doubling is most of what reads as noise.
-    lines.forEach((line, i) =>
-      ctx.fillText(line, x0, Math.round(MASTHEAD_TOP + i * lineHeight)));
-
-    return MASTHEAD_TOP + lines.length * lineHeight;
-  }
-
-  /**
-   * The ASCII masthead again, but snapped to a whole-pixel character grid.
-   *
-   * The art is monospace, so it has a character cell -- and at the size the page forces
-   * (90 characters across 952px) that cell is 10.4px, which means only every fifth
-   * character starts on a pixel boundary and the rest are anti-aliased across two
-   * columns. Drawing the string in one call leaves that to the text engine; drawing each
+   * The art is monospace, so it has a character cell -- and at the size the page forces,
+   * 90 characters across the width, that cell is about 11px. Drawn as plain strings most
+   * rows and every fourth character landed between pixels and every stroke was
+   * anti-aliased across two, which was a real share of what read as noise at this size.
+   * Drawing the string in one call leaves the placement to the text engine; drawing each
    * character at an integer x does not.
    *
    * The cost is one fillText per character -- about 500 for the whole banner, which is
    * nothing next to the background's thousands of dots. Monospace has no kerning to
    * lose, so nothing about the art changes except that it lands on the grid.
    */
-  function drawAsciiGridMasthead(ctx, theme, site) {
+  function drawAsciiMasthead(ctx, theme, site) {
     const lines = site.banner;
     const widest = lines.reduce((n, l) => Math.max(n, l.length), 0);
     if (!widest) return drawWordmarkMasthead(ctx, theme, site);
@@ -728,20 +585,6 @@
     return MASTHEAD_TOP + size * 1.06;
   }
 
-  // Named so renderPoster and the harness can ask for one without either of them
-  // holding a reference to a particular treatment.
-  const MASTHEADS = {
-    wordmark: drawWordmarkMasthead,
-    // Two weights of the same art, while which one holds up at this size is being
-    // judged. The banner is 90 characters wide across 952px of page, so each character
-    // gets about ten pixels and the strokes are close to the thinnest a screen can draw;
-    // the heavier face is an attempt to keep them from breaking up. Dropping the loser
-    // is dropping one line here.
-    ascii: (ctx, theme, site) => drawAsciiMasthead(ctx, theme, site, 700),
-    "ascii-400": (ctx, theme, site) => drawAsciiMasthead(ctx, theme, site, 400),
-    "ascii-grid": drawAsciiGridMasthead,
-  };
-
   function drawHeading(ctx, y, theme) {
     ctx.font = '700 34px "Space Mono", monospace';
     ctx.fillStyle = theme.text;
@@ -806,15 +649,9 @@
     inkText(ctx, theme, "see you out there...", PAD, SIGNOFF_BASELINE);
   }
 
-  /**
-   * Draw the whole poster onto a fresh canvas and return it.
-   *
-   * `site` is readSite()'s output. `opts` selects the two treatments still under
-   * comparison -- { background, masthead }, each a key of its registry -- and both
-   * default to what the site ships, so ordinary callers pass nothing.
-   */
-  function renderPoster(events, theme, site, opts) {
-    const { background, masthead } = opts || {};
+  /** Draw the whole poster onto a fresh canvas and return it. `site` is readSite()'s
+   *  output: the wordmark and the banner lines. */
+  function renderPoster(events, theme, site) {
     const canvas = document.createElement("canvas");
     canvas.width = W;
     canvas.height = H;
@@ -825,15 +662,15 @@
 
     // Before the frame, so the hairline stays crisp over a background that bleeds off
     // the edge of the page rather than being interrupted by it.
-    (BACKGROUNDS[background] || BACKGROUNDS[BACKGROUND])(ctx, theme);
+    drawPhotoRipple(ctx, theme);
 
     // A hairline frame, echoing the calendar's ruled surfaces.
     ctx.strokeStyle = theme.border;
     ctx.lineWidth = 2;
     ctx.strokeRect(PAD / 2, PAD / 2, W - PAD, H - PAD);
 
-    const drawMasthead = MASTHEADS[masthead] || MASTHEADS[MASTHEAD];
-    const mastheadBottom = drawMasthead(ctx, theme, site || { wordmark: "", banner: [] });
+    const mastheadBottom =
+      drawAsciiMasthead(ctx, theme, site || { wordmark: "", banner: [] });
 
     const regionTop = drawHeading(ctx, mastheadBottom + HEADING_GAP, theme) + 28;
     const regionBottom = LIST_BOTTOM;
@@ -981,10 +818,6 @@
     todayKey,
     renderPoster,
     ensureAssets,
-    BACKGROUND,
-    BACKGROUND_NAMES: Object.keys(BACKGROUNDS),
-    MASTHEAD,
-    MASTHEAD_NAMES: Object.keys(MASTHEADS),
     MAX_EVENTS,
     REF_ROWS,
     ROW_MIN,
