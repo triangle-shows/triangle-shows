@@ -157,7 +157,7 @@ function updateBottomBar() {
       : []
     ).length;
     posterBtn.style.display = upcoming > 0 ? "" : "none";
-    posterBtn.textContent = `▣ make a poster (${upcoming})`;
+    posterBtn.textContent = `▣ share a poster (${upcoming})`;
   }
 
   const restoreBtn = document.getElementById("btn-restore-hidden");

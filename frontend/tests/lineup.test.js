@@ -15,9 +15,11 @@
 // naive implementation puts a Friday show on Thursday's poster and can drop today's
 // show from it entirely. equalizer.js carries the same warning for the same reason.
 //
-// Overflow arithmetic. The poster gives up one row to a "+N more" line when the list is
-// too long, so the number in that line has to count the show whose row it took. Off by
-// one here means a poster that silently loses a show.
+// The fifteen-show cap. A longer list is cut to the soonest fifteen, and the poster now
+// says nothing about what it left out, so the cap has to cut from the right end. It also
+// has to be the thing that limits the list: if ROW_MIN ever rises past available/15, the
+// region starts dropping shows the cap meant to keep, which is why the geometry is
+// asserted alongside it.
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
@@ -99,6 +101,39 @@ test("an empty or missing store yields nothing rather than throwing", () => {
   assert.equal(L.upcomingFavorites(null, "2026-09-21").length, 0);
 });
 
+// ── posterEvents ────────────────────────────────────────────────────────────
+
+test("a long list is cut to the soonest MAX_EVENTS", () => {
+  const favs = {};
+  // 20 shows, one a day, added newest first so a cap that trusted insertion order
+  // rather than the sort would keep the wrong end of the list.
+  for (let i = 20; i >= 1; i--) favs["e" + i] = fav("e" + i, `2026-10-${String(i).padStart(2, "0")}`);
+
+  const out = L.posterEvents(favs, "2026-09-21");
+  assert.equal(out.length, L.MAX_EVENTS);
+  assert.equal(out[0].id, "e1", "starts with the soonest");
+  assert.equal(out[L.MAX_EVENTS - 1].id, "e" + L.MAX_EVENTS, "and stops at the cap");
+});
+
+test("a list at or under the cap is left whole", () => {
+  const favs = {};
+  for (let i = 1; i <= L.MAX_EVENTS; i++) favs["e" + i] = fav("e" + i, `2026-10-${String(i).padStart(2, "0")}`);
+
+  assert.equal(L.posterEvents(favs, "2026-09-21").length, L.MAX_EVENTS);
+});
+
+test("one favourite is enough for a poster", () => {
+  // There is no minimum: a single upcoming show gets a poster like any other list.
+  assert.equal(L.posterEvents({ a: fav("a", "2026-10-01") }, "2026-09-21").length, 1);
+});
+
+test("past favourites are left out of the poster list", () => {
+  const favs = { old: fav("old", "2026-01-01"), next: fav("next", "2026-10-01") };
+  const out = L.posterEvents(favs, "2026-09-21");
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, "next");
+});
+
 // ── formatPosterDate ────────────────────────────────────────────────────────
 
 test("reads the weekday in local time", () => {
@@ -112,68 +147,62 @@ test("pads the day but not the month", () => {
   assert.equal(L.formatPosterDate("2027-01-02").date, "1.02");
 });
 
-// ── monthRange ──────────────────────────────────────────────────────────────
-
-test("one month reads as one month", () => {
-  assert.equal(L.monthRange([fav("a", "2026-10-02"), fav("b", "2026-10-30")]), "oct");
-});
-
-test("several months read as a range", () => {
-  assert.equal(L.monthRange([fav("a", "2026-10-02"), fav("b", "2026-12-11")]), "oct — dec");
-});
-
-test("no shows, no range", () => {
-  assert.equal(L.monthRange([]), "");
-});
-
 // ── planLayout ──────────────────────────────────────────────────────────────
 
 const TOP = 328;
 const BOTTOM = 1240;          // the real region, ~912px tall
 const AVAILABLE = BOTTOM - TOP;
 
-test("a short list is centred rather than stranded at the top", () => {
-  const plan = L.planLayout(3, TOP, BOTTOM);
-  assert.equal(plan.visible, 3);
-  assert.equal(plan.overflow, 0);
-  assert.equal(plan.rowHeight, L.ROW_MAX, "rows open up but stop at the max");
-  const used = 3 * plan.rowHeight;
-  assert.equal(plan.blockTop, TOP + (AVAILABLE - used) / 2);
+test("a list shorter than the reference is laid out as if it were that long", () => {
+  // The visitor-facing promise: a one-favourite poster is the five-favourite poster
+  // with four rows missing, not one row stretched over the whole page.
+  const one = L.planLayout(1, TOP, BOTTOM);
+  const five = L.planLayout(L.REF_ROWS, TOP, BOTTOM);
+
+  assert.equal(one.visible, 1);
+  assert.equal(one.rowHeight, five.rowHeight, "same row height");
+  assert.equal(one.blockTop, five.blockTop, "and the first row in the same place");
+  assert.equal(one.rowHeight, L.ROW_MAX, "which is the top of the scale");
 });
 
-test("rows tighten as the list grows, down to the floor", () => {
+test("type is the same size on every poster up to the reference length", () => {
+  const sizeAt = (n) => JSON.stringify(L.rowTypeScale(L.planLayout(n, TOP, BOTTOM).rowHeight));
+  const five = sizeAt(L.REF_ROWS);
+  for (const n of [1, 2, 3, 4]) {
+    assert.equal(sizeAt(n), five, `a ${n}-show poster is set differently from a five-show one`);
+  }
+});
+
+test("rows tighten as the list grows past the reference, down to the floor", () => {
   const few = L.planLayout(6, TOP, BOTTOM);
-  const many = L.planLayout(14, TOP, BOTTOM);
+  const many = L.planLayout(L.MAX_EVENTS, TOP, BOTTOM);
   assert.ok(many.rowHeight < few.rowHeight);
   assert.ok(many.rowHeight >= L.ROW_MIN);
 });
 
-test("the last list that fits whole is not truncated", () => {
-  const maxRows = Math.floor(AVAILABLE / L.ROW_MIN);
-  const plan = L.planLayout(maxRows, TOP, BOTTOM);
-  assert.equal(plan.visible, maxRows);
-  assert.equal(plan.overflow, 0);
-});
-
-test("an overlong list gives up one row and counts the show it displaced", () => {
-  const maxRows = Math.floor(AVAILABLE / L.ROW_MIN);
-  const count = maxRows + 5;
-  const plan = L.planLayout(count, TOP, BOTTOM);
-
-  assert.equal(plan.visible, maxRows - 1, "one row goes to the '+N more' line");
-  // The whole point: drawn rows plus the overflow count must equal the real total, or
-  // the poster quietly loses the show whose row became the overflow line.
-  assert.equal(plan.visible + plan.overflow, count);
+test("a full fifteen fit, so the cap is what limits the list and not the page", () => {
+  // If this fails the poster is dropping shows the cap meant to keep: ROW_MIN has grown
+  // past available/MAX_EVENTS, or the region above the footer has shrunk.
+  const plan = L.planLayout(L.MAX_EVENTS, TOP, BOTTOM);
+  assert.equal(plan.visible, L.MAX_EVENTS);
+  assert.ok(L.MAX_EVENTS * L.ROW_MIN <= AVAILABLE,
+    `${L.MAX_EVENTS} rows at ROW_MIN=${L.ROW_MIN} need ${L.MAX_EVENTS * L.ROW_MIN}px of ${AVAILABLE}`);
 });
 
 test("rows never overflow the region they were given", () => {
+  // Past MAX_EVENTS is the caller's mistake, not a crash: the guard clamps instead.
   for (const n of [1, 2, 5, 10, 15, 16, 40, 200]) {
     const plan = L.planLayout(n, TOP, BOTTOM);
-    const drawn = plan.visible + (plan.overflow > 0 ? 1 : 0);
-    const bottom = plan.blockTop + drawn * plan.rowHeight;
+    const bottom = plan.blockTop + plan.visible * plan.rowHeight;
     assert.ok(bottom <= BOTTOM + 0.001, `n=${n} ran past the footer (${bottom} > ${BOTTOM})`);
     assert.ok(plan.blockTop >= TOP - 0.001, `n=${n} started above the region`);
   }
+});
+
+test("a region too short for the list drops rows rather than crushing them", () => {
+  const plan = L.planLayout(15, TOP, TOP + 200);
+  assert.ok(plan.visible < 15);
+  assert.ok(plan.rowHeight >= L.ROW_MIN);
 });
 
 // ── truncateToWidth ─────────────────────────────────────────────────────────
