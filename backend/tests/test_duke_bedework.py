@@ -28,6 +28,7 @@ import pytest
 from app.scrapers import duke_bedework as duke
 from app.scrapers.duke_bedework import (
     DukeBedeworkScraper,
+    event_status,
     external_id,
     location_line,
     location_name,
@@ -90,9 +91,9 @@ def feed(monkeypatch):
 
 
 def test_the_catch_all_takes_everything():
-    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
     assert len(events) == len(FEED)
-    assert {e.venue_slug for e in events} == {"duke-university"}
+    assert {e.venue_slug for e in events} == {"duke-arts"}
 
 
 def test_a_room_nobody_has_seen_before_still_reaches_the_calendar(feed):
@@ -102,7 +103,7 @@ def test_a_room_nobody_has_seen_before_still_reaches_the_calendar(feed):
                     "20260927T200000", "20260928T000000Z", "CAL-new")
     feed(FEED + [surprise])
 
-    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
     assert "A Show Somewhere New" in {e.name for e in events}
 
 
@@ -110,7 +111,7 @@ def test_the_catch_all_leaves_claimed_rooms_alone():
     """Once a room has a venue row, the catch-all must stop taking it, or the event
     would be filed at two venues at once."""
     events = run(DukeBedeworkScraper(
-        "duke-university", {"catch_all": True, "exclude_uids": [CHAPEL]}
+        "duke-arts", {"catch_all": True, "exclude_uids": [CHAPEL]}
     ).scrape())
     assert len(events) == 2
     assert "Weekday Carillon Recital" not in {e.name for e in events}
@@ -126,7 +127,7 @@ def test_named_rows_and_the_catch_all_partition_the_feed():
     """Together they must cover the feed exactly — nothing dropped, nothing twice."""
     chapel = run(DukeBedeworkScraper("duke-chapel", {"location_uids": [CHAPEL]}).scrape())
     rest = run(DukeBedeworkScraper(
-        "duke-university", {"catch_all": True, "exclude_uids": [CHAPEL]}
+        "duke-arts", {"catch_all": True, "exclude_uids": [CHAPEL]}
     ).scrape())
     ids = [e.external_id for e in chapel] + [e.external_id for e in rest]
     assert len(ids) == len(FEED)
@@ -145,7 +146,7 @@ def test_a_row_that_claims_nothing_is_a_configuration_error():
 def test_the_date_and_time_come_from_the_local_stamp():
     """17:00 local / 21:00Z. Reading the UTC value would give 21:00 on the same day here,
     and the following day for any show after 8pm."""
-    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
     recital = next(e for e in events if e.name == "Weekday Carillon Recital")
     assert recital.date == date(2026, 9, 22)
     assert recital.show_time == time(17, 0)
@@ -153,7 +154,7 @@ def test_the_date_and_time_come_from_the_local_stamp():
 
 def test_a_late_show_stays_on_its_own_day():
     """The 7:30pm Baldwin concert is 23:30Z — the case that moves if UTC is read."""
-    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
     dso = next(e for e in events if e.name == "Duke Symphony Orchestra")
     assert dso.date == date(2026, 9, 26)
     assert dso.show_time == time(19, 30)
@@ -161,7 +162,7 @@ def test_a_late_show_stays_on_its_own_day():
 
 def test_recurring_instances_get_distinct_ids():
     """One guid, many nights. Without the recurrence id they would collapse into one."""
-    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
     recitals = [e for e in events if e.name == "Weekday Carillon Recital"]
     assert len(recitals) == 2
     assert len({e.external_id for e in recitals}) == 2
@@ -181,7 +182,7 @@ def test_an_all_day_event_has_a_date_and_no_time():
 def test_an_unparseable_start_is_dropped_rather_than_guessed(feed):
     assert parse_start({"start": {"unformatted": "soon"}}) is None
     feed([_raw("Broken", CHAPEL, "Duke Chapel", "soon", "", "CAL-x")])
-    assert run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape()) == []
+    assert run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape()) == []
 
 
 # --- Other fields -------------------------------------------------------------
@@ -189,7 +190,7 @@ def test_an_unparseable_start_is_dropped_rather_than_guessed(feed):
 
 def test_the_calendars_own_page_is_always_the_source_url():
     """`link` is set on about one event in eight, so it cannot be the only link."""
-    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
     pomeroy = next(e for e in events if "Pomeroy" in e.name)
     plain = next(e for e in events if e.name == "Duke Symphony Orchestra")
 
@@ -199,7 +200,7 @@ def test_the_calendars_own_page_is_always_the_source_url():
 
 
 def test_text_is_trimmed():
-    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
     pomeroy = next(e for e in events if "Pomeroy" in e.name)
     assert pomeroy.description.endswith("An outdoor show.")
 
@@ -212,7 +213,7 @@ def test_text_is_trimmed():
 
 
 def test_the_room_leads_the_description():
-    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
     pomeroy = next(e for e in events if "Pomeroy" in e.name)
     assert pomeroy.description == (
         "American Tobacco Campus - Lawn\n\nAn outdoor show."
@@ -221,7 +222,7 @@ def test_the_room_leads_the_description():
 
 def test_an_event_with_no_blurb_gets_the_room_alone():
     """Most of this feed has no description at all, so this is the common case."""
-    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
     dso = next(e for e in events if e.name == "Duke Symphony Orchestra")
     assert dso.description == "Baldwin Auditorium"
 
@@ -232,7 +233,7 @@ def test_the_building_comes_with_the_room_when_the_feed_names_one(feed):
     raw["location"]["subaddress"] = "Westbrook Building"
     feed([raw])
 
-    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
     assert events[0].description == "Goodson Chapel, Westbrook Building"
 
 
@@ -244,7 +245,7 @@ def test_the_feeds_literal_None_is_not_a_room(feed):
                description="A show with no room given.")
     feed([raw])
 
-    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
     assert events[0].description == "A show with no room given."
     assert location_name(raw) is None
     assert location_line(raw) is None
@@ -252,5 +253,33 @@ def test_the_feeds_literal_None_is_not_a_room(feed):
 
 def test_an_event_with_neither_room_nor_blurb_has_no_description(feed):
     feed([_raw("Bare", "uid-x", "None", "20260925T190000", "20260925T230000Z", "CAL-bare")])
-    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
     assert events[0].description is None
+
+
+# --- Status -------------------------------------------------------------------
+
+
+def test_a_cancelled_event_is_not_published_as_on_sale(feed):
+    """Bedework leaves a called-off event in the feed with status CANCELLED. One of the
+    forty in the Arts window was exactly that. modal.js already renders a Cancelled
+    badge for this value — until this scraper, nothing ever produced one."""
+    raw = _raw("CANCELLED Film Screening", CHAPEL, "Duke Chapel",
+               "20260924T190000", "20260924T230000Z", "CAL-film")
+    raw["status"] = "CANCELLED"
+    feed([raw])
+
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
+    assert events[0].status == "cancelled"
+
+
+def test_everything_else_is_on_sale():
+    events = run(DukeBedeworkScraper("duke-arts", {"catch_all": True}).scrape())
+    assert {e.status for e in events} == {"on_sale"}
+
+
+def test_the_status_check_is_not_case_sensitive():
+    assert event_status({"status": "cancelled"}) == "cancelled"
+    assert event_status({"status": " CANCELLED "}) == "cancelled"
+    assert event_status({"status": "CONFIRMED"}) == "on_sale"
+    assert event_status({}) == "on_sale"

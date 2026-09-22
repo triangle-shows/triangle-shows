@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 #   tickpick_organizer Chapel of Bones
 #   webflow_cms       Pour House
 #   instantseats      Sharp 9 Gallery
-#   duke_bedework     Duke University
+#   duke_bedework     Duke Arts
 VENUES = [
     # Phase 1: Ticketmaster venues
     {
@@ -325,19 +325,20 @@ VENUES = [
         "color": "#115b10",  # deep green (Durham)
     },
     {
-        "name": "Duke University",
-        "slug": "duke-university",
+        "name": "Duke Arts",
+        "slug": "duke-arts",
         "city": "Durham",
         "capacity": None,
         "size_category": "medium",
         "website": "https://arts.duke.edu/events/",
         "scraper_type": "duke_bedework",
-        # One row for the whole university, deliberately. The feed spans Duke Chapel,
-        # Baldwin Auditorium, Goodson Chapel and American Tobacco Campus, and each of
-        # those could have a row of its own -- the scraper takes `location_uids` for
-        # exactly that. What stops it today is the palette: 23 seeded venues leave one
-        # usable gap on the hue wheel, so every extra Duke row would either collide with
-        # an existing colour or consume the gap a future venue needs.
+        # One row for all of Duke Arts, deliberately. The feed spreads over eighteen
+        # rooms -- Duke Chapel, six spaces inside the Rubenstein Arts Center, Page
+        # Auditorium, the lawn at American Tobacco -- and each could have a row of its
+        # own, which is what the scraper's `location_uids` is for. What stops it today
+        # is the palette: 23 seeded venues leave one usable gap on the hue wheel, so
+        # every extra Duke row would either collide with an existing colour or consume
+        # the gap a future venue needs.
         #
         # `catch_all` with nothing excluded therefore takes the lot. Nothing is dropped,
         # and the scraper logs the rooms it swept up with counts on every cycle, which is

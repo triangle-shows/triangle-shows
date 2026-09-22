@@ -1,28 +1,38 @@
 """
 Scraper for Duke's university calendar, which runs Bedework and publishes a real feed.
 
-`calendar.duke.edu` takes a `format` parameter alongside its category filter, so the
-Concert/Music listing is available as JSON without parsing any HTML:
+`calendar.duke.edu` takes a `format` parameter alongside its topic filter, so the Arts
+listing is available as JSON without parsing any HTML:
 
-    https://calendar.duke.edu/index?cf%5B%5D=Concert%2FMusic&format=json
+    https://calendar.duke.edu/index?topic=Arts&format=json
 
-Do not scrape `arts.duke.edu`. It looks like the right source and is not: its WordPress
-`event` post type carries no event date (the `date` field is the post date), and its own
-cards link out to calendar.duke.edu. Measured 2026-09-22, its /events/ page listed 37
-events reaching 21 October against this feed's 40 reaching 15 October — fewer events and
-six more days, for a great deal more work. See issue #23.
+Do not scrape `arts.duke.edu`, which is the obvious place to start. Its WordPress `event`
+post type carries **no event date** — the `date` field is the post date — and there is no
+schema.org Event on the page either, so there is nothing structured to read and its own
+cards link out to calendar.duke.edu anyway. It does list further ahead than this feed
+does (37 events reaching 21 October when measured on 2026-09-22), so if the horizon below
+ever becomes the binding problem it is worth revisiting as an HTML scrape — but it is a
+presentation layer over this calendar, not a second source. See issue #23.
 
 Two properties of the feed shape everything below.
 
 **It is a fixed window of 40 events, and it cannot be widened.** `days`, `count`,
 `listMode`, `setappvar(maxEntries)`, `start`, `end` and an `fexpr` date range all return
 the identical 40, and `start` is ignored rather than honoured, so it cannot be paged
-either. There is no `/feeder/` application deployed. Measured against today that window
-spans 23 days, so Duke events appear about three weeks out and no further. That is a
-property of the source, not a bug here.
+either. There is no `/feeder/` application deployed.
 
-**One feed serves many venues.** The 40 events sit at Duke Chapel, Baldwin Auditorium,
-American Tobacco Campus and others, and the manager gives one scraper run one venue — it
+Because the 40 are spent on everything the Arts topic covers — film screenings,
+exhibitions, dance classes, talks — the forward reach is short. Measured 2026-09-22 the
+window ran 10 June to 1 October: 39 upcoming events and **nine days** of lookahead. The
+narrower `cf[]=Concert/Music` filter reached 23 days on the same day but carried only
+music, and the two overlap by just 7 of 40 guids, so neither contains the other. This
+row follows the Arts topic because the venue is Duke Arts; if the horizon matters more
+than the breadth, that filter is one URL away.
+
+**One feed serves many venues.** The 40 events are spread over eighteen rooms — Duke
+Chapel, six separate spaces inside the Rubenstein Arts Center, Page Auditorium, Smith
+Warehouse, the lawn at American Tobacco, even Durham County Library — and the manager
+gives one scraper run one venue: it
 assigns `venue_id = venue.id` and reconciles with `WHERE Event.venue_id == venue_id`. So
 each Duke venue gets its own row pointing at this same scraper, and `scraper_config`
 says which locations that row claims. The feed is fetched once per cycle and shared;
@@ -51,7 +61,7 @@ from app.scrapers.base import BaseScraper, ScrapedEvent, BROWSER_HEADERS
 
 logger = logging.getLogger(__name__)
 
-FEED_URL = "https://calendar.duke.edu/index?cf%5B%5D=Concert%2FMusic&format=json"
+FEED_URL = "https://calendar.duke.edu/index?topic=Arts&format=json"
 EVENT_URL = "https://calendar.duke.edu/show?fq=id:{guid}"
 
 # How long a fetched feed may be reused. The manager scrapes venues one after another
@@ -178,6 +188,23 @@ def external_id(raw: dict) -> Optional[str]:
     return f"{guid}_{rid}" if rid else guid
 
 
+def event_status(raw: dict) -> str:
+    """The feed's status, in this project's vocabulary.
+
+    Bedework sets `status` to CANCELLED on an event that has been called off and leaves
+    it in the feed — one of the forty in the Arts window was a cancelled film screening,
+    with CANCELLED in its title too. Publishing that as `on_sale` would put a show on
+    the calendar that is not happening.
+
+    The frontend has been ready for this for longer than any scraper has produced it:
+    modal.js renders a Cancelled badge for exactly this value, and until now nothing
+    ever set it.
+    """
+    if (raw.get("status") or "").strip().upper() == "CANCELLED":
+        return "cancelled"
+    return "on_sale"
+
+
 def _clean(value: Optional[str]) -> Optional[str]:
     text = (value or "").strip()
     return text or None
@@ -196,10 +223,10 @@ class DukeBedeworkScraper(BaseScraper):
     The catch-all exists because Duke's set of locations cannot be enumerated — there is
     no locations endpoint, and the feed only ever shows the next 40 events — so a fixed
     list of rooms is guaranteed to be incomplete. Without it, a concert in a room nobody
-    had seen yet would be dropped in silence. With it, the event lands under the
-    university's own name and can be moved to a room of its own later.
+    had seen yet would be dropped in silence. With it, the event lands under Duke Arts
+    and can be moved to a room of its own later.
 
-    Used by: Duke University, which is the catch-all row and currently the only one.
+    Used by: Duke Arts, which is the catch-all row and currently the only one.
     The `location_uids` form is what a room promoted to its own venue would use.
     """
 
@@ -259,9 +286,9 @@ class DukeBedeworkScraper(BaseScraper):
         on, at = when
 
         # The room goes at the top of the description, because the venue row cannot
-        # carry it. Every Duke event is filed under one "Duke University" venue, so the
-        # calendar tile says "Duke University" whether the show is in Duke Chapel or on
-        # the lawn at American Tobacco -- and those are a mile apart and nothing alike.
+        # carry it. Every Duke event is filed under one "Duke Arts" venue, so the
+        # calendar tile says "Duke Arts" whether the show is in Duke Chapel or on the
+        # lawn at American Tobacco -- and those are a mile apart and nothing alike.
         # The description is where a visitor can actually be told which.
         #
         # Its own line rather than inline: .modal-description is styled `white-space:
@@ -285,5 +312,5 @@ class DukeBedeworkScraper(BaseScraper):
             # the event is the dependable link and the ticket link is a bonus.
             ticket_url=_clean(raw.get("link")),
             source_url=EVENT_URL.format(guid=guid) if guid else None,
-            status="on_sale",
+            status=event_status(raw),
         )
