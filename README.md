@@ -19,6 +19,7 @@ Triangle Shows aggregates live music listings from 21+ venues across the Triangl
 | Motorco Music Hall | Durham |
 | Rubies on Five Points | Durham |
 | Shadowbox Studio | Durham |
+| Sharp 9 Gallery | Durham |
 | Stancyks | Durham |
 | The Pinhook | Durham |
 | Cat's Cradle and Back Room | Chapel Hill-Carrboro |
@@ -131,7 +132,7 @@ Testing scripts are in `tools/` for debugging scrapers and development. Fair war
 
 ## Scraper map
 
-Each venue is handled by one scraper type. Last updated 2026-06-29 — may drift as venues are added.
+Each venue is handled by one scraper type. Last updated 2026-09-21 — may drift as venues are added.
 
 | Scraper | Venues |
 |---|---|
@@ -145,6 +146,7 @@ Each venue is handled by one scraper type. Last updated 2026-06-29 — may drift
 | `mec` | Shadowbox Studio, Slim's |
 | `tickpick_organizer` | Chapel of Bones |
 | `webflow_cms` | Pour House |
+| `instantseats` | Sharp 9 Gallery |
 
 The authoritative source is [`backend/app/seed.py`](backend/app/seed.py) — each venue dict has a `scraper_type` field.
 
@@ -185,7 +187,7 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for how a request reaches the app an
 
 Upcoming features and ideas are tracked in [GitHub Issues](https://github.com/triangle-shows/triangle-shows/issues). Some things I'm currently thinking about:
 
-- Adding more venues (Sharp 9 Gallery, the Fruit, others)
+- Adding more venues (the Fruit, others)
 - Handling custom/one-off events and form submission
 - Performance improvements
 - Possibly pulling in events from Instagram accounts like Fuzzy Needle
