@@ -30,7 +30,8 @@ logger = logging.getLogger(__name__)
 #   tribe_events      The Cave
 #   venuepilot        Haw River Ballroom, Rubies on Five Points, Stanczyks
 #   squarespace       Neptune's Parlour, Boom Club
-#   mec               Shadowbox Studio, Slim's
+#   mec               Shadowbox Studio
+#   arkon_bar_manager Slim's
 #   tickpick_organizer Chapel of Bones
 #   webflow_cms       Pour House
 #   instantseats      Sharp 9 Gallery
@@ -273,7 +274,7 @@ VENUES = [
         "capacity": 200,
         "size_category": "small",
         "website": "https://slimsdivebar.com/",
-        "scraper_type": "mec",
+        "scraper_type": "arkon_bar_manager",
         "scraper_config": {"url": "https://slimsdivebar.com/music-and-events/"},
         "color": "#4a3a6a",  # deep plum (Raleigh)
     },
