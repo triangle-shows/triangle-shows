@@ -216,6 +216,11 @@ ADMIN_HTML = """<!doctype html>
   .vrow { display:flex; align-items:center; gap:0.6rem; padding:0.35rem 0;
           border-bottom:1px solid #1a1a1e; }
   .vrow:last-child { border-bottom:none; }
+  /* A row mid-edit. Bordered and inset so it reads as the row having opened rather
+     than as a form that appeared next to it. */
+  .vedit { border:1px solid var(--accent, #7fb069); border-radius:4px;
+           padding:0.7rem; margin:0.4rem 0; }
+  .vedit .actions { margin-top:0.6rem; }
   .vrow .sw { width:0.8rem; height:0.8rem; border-radius:2px; flex:none; }
   .vrow .vn { color:#e8e6e3; flex:1; }
   .vrow .cm { color:#8a8a8e; font-size:0.72rem; }
@@ -235,7 +240,7 @@ ADMIN_HTML = """<!doctype html>
     <div class="controls">
       <button class="fbtn on" data-v="queue" onclick="setView('queue')">review queue</button>
       <button class="fbtn" data-v="duplicates" onclick="setView('duplicates')">duplicates</button>
-      <button class="fbtn" data-v="add" onclick="setView('add')">add event</button>
+      <button class="fbtn" data-v="add" onclick="setView('add')">manually add events + venues</button>
     </div>
     <div class="controls" id="queueControls">
       <button class="fbtn on" data-f="non_live" onclick="setFilter('non_live')">non-live</button>
@@ -429,6 +434,7 @@ ADMIN_HTML = """<!doctype html>
         </div>
       </form>
       <div id="venueList"></div>
+      <div id="manualEventList"></div>
     </div>
   </main>
 <script>
@@ -791,7 +797,7 @@ ADMIN_HTML = """<!doctype html>
     if (!confirm('Delete the venue "' + name + '" permanently?\\n\\n' +
                  'Only possible while it has no events at all.')) return;
     await foldAction(() => api('/admin/api/venues/' + id, { method: 'DELETE' }));
-    if (state.view === 'add') await loadVenues(null);
+    if (state.view === 'add') { await loadVenues(null); await loadManualLists(); }
   }
 
   async function absorb(survivorId, duplicateIds) {
@@ -855,23 +861,148 @@ ADMIN_HTML = """<!doctype html>
     if (!data.manual.length) {
       $('#venueList').innerHTML = '';
     } else {
-      $('#venueList').innerHTML = '<h2>Promoters you have added</h2>' +
+      $('#venueList').innerHTML = '<h2>Venues you have added</h2>' +
         '<p class="hint">Delete removes the venue itself. It only works once the venue has ' +
         'no events at all — otherwise removing it would take them with it.</p>' +
         data.manual.map((v) => {
           const n = v.upcoming_event_count;
           const busy = n > 0;
+          if (editing && editing.kind === 'venue' && editing.id === v.id) return venueEditor(v);
           return '<div class="vrow">' +
             '<span class="sw" style="background:' + esc(v.color) + '"></span>' +
             '<span class="vn">' + esc(v.name) + '</span>' +
             '<span class="cm">' + esc(v.city) + '</span>' +
             '<span class="cm">' + (busy ? n + ' upcoming' : 'nothing upcoming') + '</span>' +
+            '<button onclick="startEditVenue(' + v.id + ')">edit</button>' +
             '<button class="danger"' + (busy ? ' disabled title="delete its events first"' : '') +
               ' onclick="deleteVenue(' + v.id + ',' + JSON.stringify(esc(v.name)) + ')">delete</button>' +
             '</div>';
         }).join('');
     }
     venueChanged();
+  }
+
+  // --- Editing what has been added ---
+  //
+  // Both editors are inline and one-at-a-time: the row turns into a form in place, so
+  // there is no dialog to lose track of and no second copy of the list to keep in sync.
+  // Only hand-added rows appear here at all, because the endpoints refuse anything else
+  // -- a seeded venue is overwritten by seed_venues() on the next boot, and a scraped
+  // event by the next scrape, so offering the button would be offering a silent revert.
+
+  let editing = null;   // {kind, id} or null
+
+  function editorField(id, label, value, type, extra) {
+    return '<div class="f"><label for="' + id + '">' + label + '</label>' +
+      '<input id="' + id + '" type="' + (type || 'text') + '" value="' +
+      esc(value == null ? '' : String(value)) + '"' + (extra || '') + '></div>';
+  }
+
+  function cancelEdit() {
+    const kind = editing && editing.kind;
+    editing = null;
+    if (kind === 'venue') loadVenues(null); else loadManualLists();
+  }
+
+  function startEditVenue(id) {
+    editing = { kind: 'venue', id: id };
+    loadVenues(null);
+  }
+
+  function startEditEvent(id) {
+    editing = { kind: 'event', id: id };
+    loadManualLists();
+  }
+
+  function venueEditor(v) {
+    return '<div class="vedit">' +
+      '<div class="grid">' +
+        editorField('eName', 'name', v.name) +
+        editorField('eCity', 'city', v.city, 'text', ' list="cityList"') +
+        editorField('eWebsite', 'website', v.website, 'url') +
+        editorField('eColor', 'colour', v.color, 'color') +
+      '</div>' +
+      '<p class="hint">The web address people use for this venue does not change when the ' +
+      'name does, and neither does anything already saved in someone\u2019s saved favourites — ' +
+      'they keep the old name until they re-add the show.</p>' +
+      '<div class="actions">' +
+        '<button class="go" onclick="saveVenue(' + v.id + ')">save</button>' +
+        '<button onclick="cancelEdit()">cancel</button>' +
+      '</div></div>';
+  }
+
+  async function saveVenue(id) {
+    const body = {
+      name: ($('#eName').value || '').trim(),
+      city: ($('#eCity').value || '').trim(),
+      website: ($('#eWebsite').value || '').trim() || null,
+      color: $('#eColor').value,
+    };
+    await foldAction(() => api('/admin/api/venues/' + id, {
+      method: 'PATCH', body: JSON.stringify(body),
+    }));
+    editing = null;
+    await loadVenues(null);
+  }
+
+  function eventEditor(ev) {
+    return '<div class="vedit">' +
+      '<div class="grid">' +
+        editorField('gName', 'name', ev.name) +
+        editorField('gDate', 'date', ev.date, 'date') +
+        editorField('gTime', 'show time', ev.show_time || '', 'time') +
+        editorField('gArtist', 'artist', ev.artist) +
+        '<div class="f wide"><label for="gUrl">ticket link</label>' +
+          '<input id="gUrl" type="url" value="' + esc(ev.ticket_url || '') + '"></div>' +
+      '</div>' +
+      '<div class="actions">' +
+        '<button class="go" onclick="saveEvent(' + ev.id + ')">save</button>' +
+        '<button onclick="cancelEdit()">cancel</button>' +
+      '</div></div>';
+  }
+
+  async function saveEvent(id) {
+    // Sent whether or not they changed, which is safe: the endpoint treats a field it
+    // was given as a field to set, and these are all fields this form owns. What it
+    // must not do is send fields the form does not show, which would clear them.
+    const body = {
+      name: ($('#gName').value || '').trim(),
+      date: $('#gDate').value,
+      show_time: $('#gTime').value || null,
+      artist: ($('#gArtist').value || '').trim() || null,
+      ticket_url: ($('#gUrl').value || '').trim() || null,
+    };
+    await foldAction(() => api('/admin/api/events/' + id, {
+      method: 'PATCH', body: JSON.stringify(body),
+    }));
+    editing = null;
+    await loadManualLists();
+  }
+
+  async function loadManualLists() {
+    // Every hand-added event, past ones included: a typo in last month's show is still
+    // worth fixing, and they are few enough that hiding them would only mean an admin
+    // could not find one.
+    const data = await api('/admin/api/events?filter=all&show_approved=true&manual_only=true');
+    const rows = data.events || [];
+    if (!rows.length) {
+      $('#manualEventList').innerHTML = '';
+      return;
+    }
+    $('#manualEventList').innerHTML = '<h2>Events you have added</h2>' +
+      '<p class="hint">Only these can be edited here. A scraped listing is rewritten by ' +
+      'the next scrape, so a correction to one would not survive the night.</p>' +
+      rows.map((ev) => {
+        if (editing && editing.kind === 'event' && editing.id === ev.id) return eventEditor(ev);
+        return '<div class="vrow">' +
+          '<span class="vn">' + esc(ev.name) + '</span>' +
+          '<span class="cm">' + esc(ev.date) + '</span>' +
+          '<span class="cm">' + esc(ev.venue_name || '') + '</span>' +
+          '<button onclick="startEditEvent(' + ev.id + ')">edit</button>' +
+          '<button class="danger" onclick="deleteEvent(' + ev.id + ',' +
+            JSON.stringify(esc(ev.name)) + ')">delete</button>' +
+        '</div>';
+      }).join('');
   }
 
   function fieldValue(id) {
@@ -977,7 +1108,10 @@ ADMIN_HTML = """<!doctype html>
       if (state.view === 'duplicates') await loadDuplicates();
       // The add form is loaded, not reloaded: refetching venues on every action would
       // reset the dropdown mid-typing. loadVenues() is called explicitly after a write.
-      else if (state.view === 'add') await loadVenues($('#fVenue').value || null);
+      else if (state.view === 'add') {
+        await loadVenues($('#fVenue').value || null);
+        await loadManualLists();
+      }
       else await load();
     } catch (e) {
       showError(e);
