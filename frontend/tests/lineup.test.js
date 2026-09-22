@@ -134,6 +134,122 @@ test("past favourites are left out of the poster list", () => {
   assert.equal(out[0].id, "next");
 });
 
+// ── Fallbacks ───────────────────────────────────────────────────────────────
+//
+// Two drawers defer to a second one when what they need is absent, and neither of those
+// paths runs in ordinary use: drawPhotoRipple falls back to the procedural ripple when
+// img/ripple-matrix.jpg has not loaded, and drawAsciiMasthead falls back to the wordmark
+// when the header carries no art. The first of those is a live production path -- the
+// asset can 404 after a bad deploy, or be blocked, or miss the cache offline. The second
+// currently is not: .ascii-title sits in index.html unconditionally and is only hidden by
+// CSS, so textContent always finds it.
+//
+// Both are worth holding to account anyway, and these are the only tests that touch the
+// drawing code at all. A recording canvas stands in for the real one, so what is asserted
+// is which calls were made rather than what any of it looked like.
+
+function recordingCtx() {
+  const calls = [];
+  return {
+    calls,
+    // Written to by the drawers; kept as plain properties so assignment just works.
+    font: "", fillStyle: "", strokeStyle: "", lineWidth: 0, lineJoin: "", miterLimit: 0,
+    textBaseline: "", textAlign: "", letterSpacing: "", globalAlpha: 1,
+    save() { calls.push(["save"]); },
+    restore() { calls.push(["restore"]); },
+    beginPath() { calls.push(["beginPath"]); },
+    fill() { calls.push(["fill"]); },
+    rect(...a) { calls.push(["rect", ...a]); },
+    arc(...a) { calls.push(["arc", ...a]); },
+    fillRect(...a) { calls.push(["fillRect", ...a]); },
+    fillText(t, x, y) { calls.push(["fillText", t, x, y]); },
+    strokeText(t, x, y) { calls.push(["strokeText", t, x, y]); },
+    // Monospace at a 0.6 advance ratio, read off the font string, which is close enough
+    // to Space Mono that the geometry below comes out at the real numbers.
+    measureText(str) {
+      const px = /(\d+(?:\.\d+)?)px/.exec(this.font);
+      return { width: String(str).length * (px ? Number(px[1]) : 16) * 0.6 };
+    },
+  };
+}
+
+const THEME = {
+  bg: "#1a1008", surface: "#241609", border: "#3d2a12",
+  text: "#e8d5b0", muted: "#9a7a50", accent: "#c87941",
+};
+
+const of = (ctx, name) => ctx.calls.filter((c) => c[0] === name);
+
+test("with no photograph loaded, the background still draws something", () => {
+  // ensureAssets() has never run here -- there is no Image in a bare vm context -- so
+  // the module's cached photo is null and this must take the procedural path. It also
+  // has to do so without touching the DOM, which is why the fallback is checked before
+  // the offscreen canvas the photo path needs.
+  const ctx = recordingCtx();
+  L.drawPhotoRipple(ctx, THEME);
+
+  const pins = of(ctx, "rect");
+  assert.ok(pins.length > 500, `drew ${pins.length} pins, expected a full field`);
+  assert.equal(of(ctx, "fill").length, 1, "one batched fill, not one per pin");
+  assert.equal(ctx.fillStyle, THEME.accent);
+});
+
+test("the fallback background keeps its pins on the page", () => {
+  const ctx = recordingCtx();
+  L.drawPhotoRipple(ctx, THEME);
+  const pins = of(ctx, "rect");
+  assert.ok(pins.length > 0, "nothing was drawn, so the bounds below prove nothing");
+  for (const [, x, y] of pins) {
+    assert.ok(x >= 0 && x <= 1080, `pin x=${x} off the page`);
+    assert.ok(y >= 0 && y <= 1350, `pin y=${y} off the page`);
+  }
+});
+
+test("with no art in the header, the masthead falls back to the wordmark", () => {
+  const ctx = recordingCtx();
+  const bottom = L.drawAsciiMasthead(ctx, THEME, { wordmark: "durm-shows", banner: [] });
+
+  const drawn = of(ctx, "fillText");
+  assert.equal(drawn.length, 1, "the wordmark is one string, not one call per character");
+  assert.equal(drawn[0][1], "durm-shows", "and it is the name the page carries");
+  assert.match(ctx.font, /Orbitron/, "set in the site's logo face");
+  assert.ok(bottom > 52, "and it reports a bottom for the heading to measure from");
+});
+
+test("with art in the header, the masthead draws it character by character", () => {
+  const ctx = recordingCtx();
+  const banner = [" __  _", "/ _\| |", "\__/|_|"];
+  L.drawAsciiMasthead(ctx, THEME, { wordmark: "triangle-shows", banner });
+
+  const drawn = of(ctx, "fillText");
+  // Every non-space character, and nothing else: spaces are skipped rather than drawn.
+  const expected = banner.join("").replace(/ /g, "").length;
+  assert.equal(drawn.length, expected);
+  assert.ok(drawn.every((c) => c[1].length === 1), "one character per call");
+  assert.ok(!drawn.some((c) => c[1] === "triangle-shows"), "the wordmark is not drawn");
+});
+
+test("the banner is placed on whole pixels, inside the frame", () => {
+  // The two things the grid drawer exists for. The frame is stroked at PAD/2 with a 2px
+  // pen, so its inner edge runs from x=33 to x=1047.
+  const ctx = recordingCtx();
+  const line = "#".repeat(90);           // the real banner's width
+  L.drawAsciiMasthead(ctx, THEME, { wordmark: "triangle-shows", banner: [line, line] });
+
+  const drawn = of(ctx, "fillText");
+  assert.ok(drawn.length > 100, `drew ${drawn.length} characters, expected the banner`);
+  for (const [, , x, y] of drawn) {
+    assert.equal(x, Math.round(x), `x=${x} is not a whole pixel`);
+    assert.equal(y, Math.round(y), `y=${y} is not a whole pixel`);
+  }
+  const xs = drawn.map((c) => c[2]);
+  assert.ok(Math.min(...xs) >= 33, `art starts at ${Math.min(...xs)}, inside the frame`);
+  assert.ok(Math.max(...xs) <= 1047, `art ends at ${Math.max(...xs)}, inside the frame`);
+  // Wider than the text column: running out to the frame is what buys the character
+  // cell its eleventh pixel, and losing that is the regression to catch.
+  assert.ok(Math.min(...xs) < 64, "the banner overhangs the text column, as intended");
+});
+
 // ── formatPosterDate ────────────────────────────────────────────────────────
 
 test("reads the weekday in local time", () => {

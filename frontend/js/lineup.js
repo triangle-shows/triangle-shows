@@ -806,6 +806,13 @@
 
   // --- Exports ---
   // The pure half is exported for the tests; the rest is what index.html calls.
+  //
+  // drawPhotoRipple and drawAsciiMasthead are here for the tests too, and for one
+  // specific reason: each defers to a second function when what it wants is missing --
+  // the photograph, or the header's art -- and neither of those paths runs in ordinary
+  // use. Exported, they can be called with a recording canvas and a missing input, which
+  // is the only way the fallbacks get exercised at all. Without that they are code that
+  // nothing reaches until the day it matters.
   global.Lineup = {
     upcomingFavorites,
     posterEvents,
@@ -818,6 +825,8 @@
     todayKey,
     renderPoster,
     ensureAssets,
+    drawPhotoRipple,
+    drawAsciiMasthead,
     MAX_EVENTS,
     REF_ROWS,
     ROW_MIN,
