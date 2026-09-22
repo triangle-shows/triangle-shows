@@ -359,6 +359,9 @@ class ScrapeManager:
         elif venue.scraper_type == "instantseats":
             from app.scrapers.instantseats import InstantSeatsScraper
             return InstantSeatsScraper(venue.slug, venue.scraper_config)
+        elif venue.scraper_type == "duke_bedework":
+            from app.scrapers.duke_bedework import DukeBedeworkScraper
+            return DukeBedeworkScraper(venue.slug, venue.scraper_config)
         else:
             logger.warning(f"Unknown scraper type: {venue.scraper_type}")
             return None

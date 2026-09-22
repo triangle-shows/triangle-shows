@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 #   tickpick_organizer Chapel of Bones
 #   webflow_cms       Pour House
 #   instantseats      Sharp 9 Gallery
+#   duke_bedework     Duke University
 VENUES = [
     # Phase 1: Ticketmaster venues
     {
@@ -322,6 +323,34 @@ VENUES = [
         # next promoter nowhere to go. Sitting off to one side keeps a 63-degree gap
         # open above this venue. Check that test before moving this hue.
         "color": "#115b10",  # deep green (Durham)
+    },
+    {
+        "name": "Duke University",
+        "slug": "duke-university",
+        "city": "Durham",
+        "capacity": None,
+        "size_category": "medium",
+        "website": "https://arts.duke.edu/events/",
+        "scraper_type": "duke_bedework",
+        # One row for the whole university, deliberately. The feed spans Duke Chapel,
+        # Baldwin Auditorium, Goodson Chapel and American Tobacco Campus, and each of
+        # those could have a row of its own -- the scraper takes `location_uids` for
+        # exactly that. What stops it today is the palette: 23 seeded venues leave one
+        # usable gap on the hue wheel, so every extra Duke row would either collide with
+        # an existing colour or consume the gap a future venue needs.
+        #
+        # `catch_all` with nothing excluded therefore takes the lot. Nothing is dropped,
+        # and the scraper logs the rooms it swept up with counts on every cycle, which is
+        # what will say when one has earned a row and a colour of its own.
+        "scraper_config": {"catch_all": True},
+        # Hue 309, in the 51-degree gap between Boom Club's violet (285) and Kings'
+        # magenta (335) -- 25 degrees from either, which is wider than much of the
+        # palette is from itself. Deliberately not the 63-degree yellow-green gap at
+        # hue 88: that is the only opening left that clears test_venue_colors' 30-degree
+        # rule for the *next* venue anyone adds, and spending it here would break that
+        # test for a colour this venue does not need. 8.80:1 against white, in line with
+        # the rest of the seeded palette.
+        "color": "#7e2570",  # plum (Durham)
     },
 ]
 
