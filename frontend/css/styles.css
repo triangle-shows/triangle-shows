@@ -1171,6 +1171,7 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
 
 .btn-favorites-only,
 .btn-download-shows,
+.btn-lineup-graphic,
 .btn-restore-hidden {
   display: inline-block;
   padding: 0.38rem 0.85rem;
@@ -1189,6 +1190,7 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
 }
 .btn-favorites-only:hover,
 .btn-download-shows:hover,
+.btn-lineup-graphic:hover,
 .btn-restore-hidden:hover {
   background: var(--accent);
   color: var(--bg);
@@ -1196,6 +1198,64 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
 }
 /* Restore button: slightly subdued by default */
 .btn-restore-hidden { opacity: 0.55; }
+
+/* Poster button disabled state — it carries a "drawing..." label while the canvas is
+   rendered, and must not look pressable during that. */
+.btn-lineup-graphic:disabled { opacity: 0.4; cursor: progress; }
+.btn-lineup-graphic:disabled:hover { background: transparent; color: var(--accent); }
+
+/* === Lineup poster preview === */
+.lineup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(2px);
+}
+.lineup-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  max-height: 100%;
+}
+/* The canvas is 1080x1350 regardless of screen; height drives the fit so the whole
+   poster is visible without scrolling, which is the point of a preview. */
+.lineup-canvas {
+  max-height: calc(100vh - 8rem);
+  max-width: 100%;
+  height: auto;
+  width: auto;
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.lineup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+}
+.lineup-btn {
+  padding: 0.45rem 1rem;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  cursor: pointer;
+  border-radius: 1px;
+  transition: background 0.15s, color 0.15s;
+}
+.lineup-btn:hover { background: var(--accent); color: var(--bg); }
+.lineup-btn-quiet { border-color: var(--border); color: var(--muted); }
+.lineup-btn-quiet:hover { background: var(--border); color: var(--text); }
 
 /* Favourites-only toggle.
    The other two buttons are actions — press and something happens. This one is a mode,

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # scraper_config passes venue-specific options (URL, filters, account IDs) to that scraper.
 # color is the hex used by the FullCalendar frontend to distinguish venues by city.
 #
-# Scraper → venue mapping (as of 2026-06-29 — update when venues are added/changed):
+# Scraper → venue mapping (as of 2026-09-21 — update when venues are added/changed):
 #   ticketmaster      Koka Booth Amphitheatre, Red Hat Amphitheater, DPAC, The Ritz
 #   rhp_events        Lincoln Theatre, Cat's Cradle, Cat's Cradle Back Room, Local 506, The Pinhook
 #   motorco           Motorco Music Hall
@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 #   mec               Shadowbox Studio, Slim's
 #   tickpick_organizer Chapel of Bones
 #   webflow_cms       Pour House
+#   instantseats      Sharp 9 Gallery
 VENUES = [
     # Phase 1: Ticketmaster venues
     {
@@ -294,6 +295,33 @@ VENUES = [
         # Stanczyks' espresso (#5a3a20), the nearest warm tone and also a Durham venue,
         # so the two do not read alike when they land in the same week.
         "color": "#5f5a0b",  # citrine (Durham)
+    },
+    {
+        "name": "Sharp 9 Gallery",
+        "slug": "sharp-nine",
+        "city": "Durham",
+        # The venue publishes no capacity; 45 is the seated figure third-party
+        # directories carry. Nothing renders it today -- size_category is what the
+        # app uses, and "small" is not in doubt either way.
+        "capacity": 45,
+        "size_category": "small",
+        "website": "https://www.durhamjazzworkshop.org/",
+        "scraper_type": "instantseats",
+        # The venue page at /concerts.html is a full-page iframe of this widget and holds
+        # no event markup of its own, so the widget is the listing.
+        "scraper_config": {"url": "https://clickgobuynow.com/durham/"},
+        # Hue 119, in the wide yellow-to-green hole between Carolina Theatre's citrine
+        # (56) and Cat's Cradle's emerald (149) -- 63 degrees from the nearest Durham
+        # venue, so the two never read alike inside the city's sidebar group. 8.31:1
+        # against white, clearing frontend/js/design.js's lightness cap unclamped.
+        #
+        # Deliberately not at the midpoint of that hole. pick_venue_color drops a venue
+        # an admin creates at runtime into whatever gap is then widest, and
+        # test_venue_colors asserts it lands more than 30 degrees from everything
+        # seeded -- so a seeded colour taking the centre of the only big gap leaves the
+        # next promoter nowhere to go. Sitting off to one side keeps a 63-degree gap
+        # open above this venue. Check that test before moving this hue.
+        "color": "#115b10",  # deep green (Durham)
     },
 ]
 

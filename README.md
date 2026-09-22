@@ -19,6 +19,7 @@ Triangle Shows aggregates live music listings from 21+ venues across the Triangl
 | Motorco Music Hall | Durham |
 | Rubies on Five Points | Durham |
 | Shadowbox Studio | Durham |
+| Sharp 9 Gallery | Durham |
 | Stancyks | Durham |
 | The Pinhook | Durham |
 | Cat's Cradle and Back Room | Chapel Hill-Carrboro |
@@ -131,7 +132,7 @@ Testing scripts are in `tools/` for debugging scrapers and development. Fair war
 
 ## Scraper map
 
-Each venue is handled by one scraper type. Last updated 2026-06-29 — may drift as venues are added.
+Each venue is handled by one scraper type. Last updated 2026-09-21 — may drift as venues are added.
 
 | Scraper | Venues |
 |---|---|
@@ -145,6 +146,7 @@ Each venue is handled by one scraper type. Last updated 2026-06-29 — may drift
 | `mec` | Shadowbox Studio, Slim's |
 | `tickpick_organizer` | Chapel of Bones |
 | `webflow_cms` | Pour House |
+| `instantseats` | Sharp 9 Gallery |
 
 The authoritative source is [`backend/app/seed.py`](backend/app/seed.py) — each venue dict has a `scraper_type` field.
 
@@ -185,7 +187,7 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for how a request reaches the app an
 
 Upcoming features and ideas are tracked in [GitHub Issues](https://github.com/triangle-shows/triangle-shows/issues). Some things I'm currently thinking about:
 
-- Adding more venues (Sharp 9 Gallery, the Fruit, others)
+- Adding more venues (the Fruit, others)
 - Handling custom/one-off events and form submission
 - Performance improvements
 - Possibly pulling in events from Instagram accounts like Fuzzy Needle
@@ -206,8 +208,10 @@ Functional Source License 1.1 with an Apache 2.0 future license ([FSL-1.1-ALv2](
 Source-available: use, modify and redistribute it for any purpose except competing use, and
 each version becomes Apache 2.0 two years after its release.
 
-The license covers the code. It does not cover the event data the API serves — that is
-aggregated from venues' own public listings and from the Ticketmaster Discovery API, and
-remains the property of the respective venues and rights holders.
+The Functional Source License covers the code. The underlying data that populates the calendar is the property of the original sites.
 
-Contact me at [@tyfi](https://bsky.app/profile/tyfi.bsky.social) on Bluesky, or you can email [mail@triangle-shows.net](mailto:mail@triangle-shows.net)
+The formatting, curation, and filtering of the dataset is the property of triangle-shows.
+The data is available for your own non-competing use; if you use the underlying data, attribute it to triangle-shows.
+You can use words like "powered by triangle-shows" with a link back to the original site or this repo.
+
+Contact me at [@tyfi](https://bsky.app/profile/tyfi.bsky.social) on Bluesky, or you can email [mail@triangle-shows.net](mailto:mail@triangle-shows.net).
