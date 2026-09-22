@@ -475,6 +475,10 @@ document.addEventListener("DOMContentLoaded", function () {
           venue_name: p.venue_name || "",
           venue_city: p.venue_city || "",
           ticket_url: p.ticket_url || "",
+          // Stored so the lineup poster can colour a show by its venue even when
+          // that date is outside the fetched window. Favourites saved before this
+          // was added have no such key, which js/lineup.js recovers from elsewhere.
+          venue_color: p.venue_color || "",
         });
       } else {
         // For grouped venues (e.g. DPAC), hide all same-day events so a
