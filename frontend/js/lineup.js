@@ -260,7 +260,11 @@
   // --- Theme + asset access (DOM, but only when called) ---
 
   /** Read the live palette. Falls back to the amber defaults so a poster still renders
-   *  if a custom property is missing or the browser refuses getComputedStyle. */
+   *  if a custom property is missing or the browser refuses getComputedStyle.
+   *
+   *  This mirrors the site's palette rather than only the parts the poster draws today:
+   *  `surface` and `muted` are both read and neither is currently used, which is
+   *  deliberate so a change of mind about a colour does not also mean a change here. */
   function readTheme() {
     const fallback = {
       bg: "#1a1008", surface: "#241609", border: "#3d2a12",
@@ -642,7 +646,16 @@
     if (meta) {
       ctx.font = `400 ${size.meta}px "IBM Plex Mono", monospace`;
       const measureMeta = (s) => ctx.measureText(s).width;
-      ctx.fillStyle = theme.muted;
+      // The text colour, not the muted one. Muted sits at almost the same tone as the
+      // background matrix, so on a dark palette the venue line dissolved into the dots
+      // -- worst on a crowded poster, which is where the matrix is densest and where
+      // there are the most venue lines to read. The knockout already keeps the dots off
+      // the glyph edges; this is about the fill itself having somewhere to be seen.
+      //
+      // The title still leads without needing a colour of its own: it is 29px at weight
+      // 600 against 18px at 400, so the hierarchy is carried by size and weight. What
+      // this does cost is that the row no longer has a quiet line -- which is the point.
+      ctx.fillStyle = theme.text;
       inkText(ctx, theme, truncateToWidth(measureMeta, meta, textW), textX,
               mid + size.meta + 6);
     }
