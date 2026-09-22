@@ -114,10 +114,31 @@ def location_uid(raw: dict) -> Optional[str]:
 
 
 def location_name(raw: dict) -> Optional[str]:
-    """The room's display name, for logging an unclaimed location usefully."""
+    """The room's display name, or None when the feed does not name one.
+
+    Duke writes the *string* "None" rather than a null when an event has no location --
+    two of forty in one sample -- so it has to be filtered by value. Without that, the
+    room line below would read "None" and the log would count a room by that name.
+    """
     loc = raw.get("location") or {}
     name = (loc.get("address") or "").strip()
-    return name or None
+    if not name or name.lower() == "none":
+        return None
+    return name
+
+
+def location_line(raw: dict) -> Optional[str]:
+    """The room as it should read to a visitor: the name, and the building it sits in.
+
+    `subaddress` is set on some rooms and is the difference between "Goodson Chapel" and
+    "Goodson Chapel, Westbrook Building" -- worth having for somewhere nobody can find.
+    """
+    name = location_name(raw)
+    if not name:
+        return None
+    loc = raw.get("location") or {}
+    sub = (loc.get("subaddress") or "").strip()
+    return f"{name}, {sub}" if sub and sub.lower() != "none" else name
 
 
 def parse_start(raw: dict) -> Optional[tuple[date, Optional[time_of_day]]]:
@@ -237,6 +258,20 @@ class DukeBedeworkScraper(BaseScraper):
             return None
         on, at = when
 
+        # The room goes at the top of the description, because the venue row cannot
+        # carry it. Every Duke event is filed under one "Duke University" venue, so the
+        # calendar tile says "Duke University" whether the show is in Duke Chapel or on
+        # the lawn at American Tobacco -- and those are a mile apart and nothing alike.
+        # The description is where a visitor can actually be told which.
+        #
+        # Its own line rather than inline: .modal-description is styled `white-space:
+        # pre-line`, so the break renders, and the room reads as a heading above the
+        # blurb instead of running into the first sentence.
+        description = _clean(raw.get("description"))
+        room = location_line(raw)
+        if room:
+            description = f"{room}\n\n{description}" if description else room
+
         guid = (raw.get("guid") or "").strip()
         return ScrapedEvent(
             name=name,
@@ -245,7 +280,7 @@ class DukeBedeworkScraper(BaseScraper):
             source="duke_bedework",
             external_id=external_id(raw),
             show_time=at,
-            description=_clean(raw.get("description")),
+            description=description,
             # `link` is set on about one event in eight, so the calendar's own page for
             # the event is the dependable link and the ticket link is a bonus.
             ticket_url=_clean(raw.get("link")),

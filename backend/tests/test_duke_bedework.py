@@ -26,7 +26,13 @@ from datetime import date, time
 import pytest
 
 from app.scrapers import duke_bedework as duke
-from app.scrapers.duke_bedework import DukeBedeworkScraper, external_id, parse_start
+from app.scrapers.duke_bedework import (
+    DukeBedeworkScraper,
+    external_id,
+    location_line,
+    location_name,
+    parse_start,
+)
 
 
 CHAPEL = "18832edc-1b27e154-011b-281ad92b-00000024"
@@ -195,4 +201,56 @@ def test_the_calendars_own_page_is_always_the_source_url():
 def test_text_is_trimmed():
     events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
     pomeroy = next(e for e in events if "Pomeroy" in e.name)
-    assert pomeroy.description == "An outdoor show."
+    assert pomeroy.description.endswith("An outdoor show.")
+
+
+# --- The room, which the venue row cannot carry -------------------------------
+#
+# Every Duke event is filed under one "Duke University" venue, so the calendar tile says
+# the same thing whether the show is in Duke Chapel or on the lawn at American Tobacco.
+# The description is the only place a visitor can be told which.
+
+
+def test_the_room_leads_the_description():
+    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    pomeroy = next(e for e in events if "Pomeroy" in e.name)
+    assert pomeroy.description == (
+        "American Tobacco Campus - Lawn\n\nAn outdoor show."
+    )
+
+
+def test_an_event_with_no_blurb_gets_the_room_alone():
+    """Most of this feed has no description at all, so this is the common case."""
+    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    dso = next(e for e in events if e.name == "Duke Symphony Orchestra")
+    assert dso.description == "Baldwin Auditorium"
+
+
+def test_the_building_comes_with_the_room_when_the_feed_names_one(feed):
+    raw = _raw("Evensong", "uid-goodson", "Goodson Chapel",
+               "20260924T170000", "20260924T210000Z", "CAL-evensong")
+    raw["location"]["subaddress"] = "Westbrook Building"
+    feed([raw])
+
+    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    assert events[0].description == "Goodson Chapel, Westbrook Building"
+
+
+def test_the_feeds_literal_None_is_not_a_room(feed):
+    """Duke writes the string "None", not a null, when an event has no location. Two of
+    forty carried it in one sample, and unfiltered each would open with the word None."""
+    raw = _raw("Somewhere Unstated", "00f1fcdb-uid", "None",
+               "20260925T190000", "20260925T230000Z", "CAL-nowhere",
+               description="A show with no room given.")
+    feed([raw])
+
+    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    assert events[0].description == "A show with no room given."
+    assert location_name(raw) is None
+    assert location_line(raw) is None
+
+
+def test_an_event_with_neither_room_nor_blurb_has_no_description(feed):
+    feed([_raw("Bare", "uid-x", "None", "20260925T190000", "20260925T230000Z", "CAL-bare")])
+    events = run(DukeBedeworkScraper("duke-university", {"catch_all": True}).scrape())
+    assert events[0].description is None
