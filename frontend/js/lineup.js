@@ -517,6 +517,8 @@
   function drawAsciiMasthead(ctx, theme, site) {
     const lines = site.banner;
     const widest = lines.reduce((n, l) => Math.max(n, l.length), 0);
+    // No art in the header: fall back to the wordmark rather than drawing nothing. See
+    // that function for why it is a guard and not a device-dependent choice.
     if (!widest) return drawWordmarkMasthead(ctx, theme, site);
 
     // Size first, from the width the page allows -- the same number the unsnapped
@@ -553,6 +555,19 @@
 
   /**
    * The wordmark masthead: the site's name, in the site's logo face.
+   *
+   * A guard, not a treatment to choose between. Every poster draws the ASCII banner;
+   * this runs only when the header carries no art, which no current layout produces --
+   * .ascii-title sits in index.html unconditionally and is only hidden by CSS on narrow
+   * screens, so textContent always finds it. It is kept for a header that changes, and
+   * frontend/tests/lineup.test.js exercises it so that day is not the first time it runs.
+   *
+   * Deliberately not chosen by what the visitor is looking at. Selecting it when the
+   * header has the wordmark showing -- on a phone, where the art is hidden -- was
+   * considered and rejected: a poster is a fixed artefact, and one that came out
+   * differently depending on the device that made it would stop being predictable.
+   * Recorded here because the alternative reads like an improvement until you want two
+   * posters of the same favourites to match.
    *
    * Sized by measuring rather than by a fixed number, so it sets to the same width
    * whatever it says -- "durm-shows" is four characters shorter than "triangle-shows"
