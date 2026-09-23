@@ -29,7 +29,7 @@ from app.database import get_session
 from app.models import Event, Venue, SeriesOverride, MANUAL_SCRAPER_TYPE
 from app.classifier import normalize_series_name, criteria_summary, reclassify_floor
 from app.duplicates import FoldError, build_clusters, validate_fold
-from app.scrapers.base import ScrapedEvent
+from app.scrapers.base import ScrapedEvent, clean_title
 from app.scrapers.manager import ScrapeManager, event_from_scraped
 from app.venue_colors import is_valid_hex, pick_venue_color
 from app.admin_ui import LOGIN_HTML, ADMIN_HTML
@@ -251,6 +251,7 @@ async def admin_events(
     search: Optional[str] = None,
     future_only: bool = Query(False, description="Hide events before today"),
     show_approved: bool = Query(False, description="Include events already reviewed"),
+    manual_only: bool = Query(False, description="Only rows a human created by hand"),
     limit: int = Query(1000, ge=1, le=5000),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -273,6 +274,10 @@ async def admin_events(
     if search:
         term = f"%{search}%"
         base.append(or_(Event.name.ilike(term), Event.artist.ilike(term)))
+    if manual_only:
+        # The hand-added list on the add tab. These are the only rows that can be edited
+        # there, so showing anything else would offer a button that always refuses.
+        base.append(Event.is_manually_created.is_(True))
 
     conditions = list(base)
     if not show_approved:
@@ -373,6 +378,9 @@ async def admin_events(
             "genre": e.genre,
             "ticket_url": e.ticket_url,
             "age_restriction": e.age_restriction,
+            # The edit form on the add tab writes this back, so it has to be able to
+            # read it first — without it, saving a hand-added event would blank the time.
+            "show_time": e.show_time.strftime("%H:%M") if e.show_time else None,
             # Exposed so the dashboard can collapse a series into one row using the
             # same key a series override matches on — group and override stay in sync.
             "series_key": series_key,
@@ -747,6 +755,52 @@ class ManualEventBody(BaseModel):
     is_live_music: bool = True
 
 
+class ManualVenueEditBody(BaseModel):
+    """The fields of a hand-added venue that may be changed.
+
+    Every field is optional and absence means "leave it alone", which is what makes this
+    a PATCH. Sending a field explicitly as null clears it where that is meaningful --
+    `model_fields_set` is what tells the two apart, so no sentinel value is needed.
+
+    `slug` is deliberately not here, and that is a decision rather than an oversight. It
+    is baked into Event.hash (venue_slug | date | name), which is stored and unique, so
+    changing it would strand every existing row's hash. Nothing recomputes those for a
+    manual venue today, but a venue that later gained a scraper would find plan_upsert
+    falling back to a hash that can never match, inserting duplicates and expiring the
+    originals. The slug is not shown to anyone; the name is what people read.
+    """
+
+    name: Optional[str] = None
+    city: Optional[str] = None
+    size_category: Optional[str] = None
+    website: Optional[str] = None
+    color: Optional[str] = None
+
+
+class ManualEventEditBody(BaseModel):
+    """The fields of a hand-added event that may be changed.
+
+    Same PATCH semantics as ManualVenueEditBody. `is_live_music` is not here on purpose:
+    the live-music verdict has its own endpoint (`/api/events/{id}/override`), and having
+    two ways to set it would mean two ways for it to disagree with
+    `is_manual_override`.
+    """
+
+    venue_id: Optional[int] = None
+    name: Optional[str] = None
+    date: Optional[str] = None  # ISO
+    artist: Optional[str] = None
+    support_artists: Optional[str] = None
+    doors_time: Optional[str] = None  # HH:MM
+    show_time: Optional[str] = None
+    ticket_url: Optional[str] = None
+    price_min: Optional[float] = None
+    price_max: Optional[float] = None
+    description: Optional[str] = None
+    genre: Optional[str] = None
+    age_restriction: Optional[str] = None
+
+
 def _slugify(name: str) -> str:
     """A URL-safe slug for a hand-created venue."""
     slug = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
@@ -872,6 +926,95 @@ async def create_manual_venue(
     }
 
 
+@router.patch("/api/venues/{venue_id}", dependencies=[Depends(require_admin)])
+async def edit_manual_venue(
+    venue_id: int,
+    body: ManualVenueEditBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Change a hand-added venue.
+
+    Restricted to manual venues, and the restriction is the point rather than caution.
+    seed_venues() runs on every boot and overwrites every field of every venue whose slug
+    appears in VENUES:
+
+        for key, value in venue_data.items():
+            setattr(existing, key, value)
+
+    So an edit to a seeded venue survives until the next deploy or container restart and
+    then silently reverts, which looks exactly like the save button not working. Editing
+    those means editing seed.py.
+
+    One thing this cannot undo: the public site copies venue_name, venue_city and
+    venue_color into a visitor's saved favourites when they heart a show. A rename leaves
+    the old name in their favourites, and on any poster they make from them. Nothing
+    server-side can reach that, so a rename is worth meaning.
+    """
+    venue = await session.get(Venue, venue_id)
+    if not venue:
+        raise HTTPException(status_code=404, detail="Venue not found")
+    if venue.scraper_type != MANUAL_SCRAPER_TYPE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f'"{venue.name}" is a seeded venue, not one added by hand. Editing it '
+                "here would be undone on the next restart — change it in seed.py."
+            ),
+        )
+
+    given = body.model_fields_set
+
+    if "name" in given:
+        name = (body.name or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="A name is required.")
+        # The slug stays as it is, so a rename cannot collide there. Two venues sharing a
+        # display name still would, in every picker that lists them.
+        clash = (await session.execute(
+            select(Venue).where(func.lower(Venue.name) == name.lower(), Venue.id != venue_id)
+        )).scalar_one_or_none()
+        if clash:
+            raise HTTPException(
+                status_code=409, detail=f'"{clash.name}" already uses that name.'
+            )
+        venue.name = name
+
+    if "city" in given:
+        city = (body.city or "").strip()
+        if not city:
+            raise HTTPException(
+                status_code=400,
+                detail="A city is required — the public site groups and filters venues by it.",
+            )
+        venue.city = city
+
+    if "size_category" in given:
+        venue.size_category = (body.size_category or "small").strip() or "small"
+
+    if "website" in given:
+        venue.website = (body.website or "").strip() or None
+
+    if "color" in given:
+        color = (body.color or "").strip().lower()
+        if not re.fullmatch(r"#[0-9a-f]{6}", color):
+            raise HTTPException(
+                status_code=400, detail=f"{body.color!r} is not a hex colour like #7fb069."
+            )
+        venue.color = color
+
+    await session.commit()
+    logger.info(f"[admin] edited manual venue {venue_id} {venue.name!r} ({sorted(given)})")
+    return {
+        "ok": True,
+        "id": venue.id,
+        "name": venue.name,
+        "city": venue.city,
+        "color": venue.color,
+        "website": venue.website,
+        "size_category": venue.size_category,
+    }
+
+
 @router.post("/api/events", dependencies=[Depends(require_admin)])
 async def create_manual_event(
     body: ManualEventBody,
@@ -968,6 +1111,127 @@ async def create_manual_event(
         "id": event.id,
         "name": event.name,
         "date": event.date.isoformat(),
+        "venue_name": venue.name,
+    }
+
+
+@router.patch("/api/events/{event_id}", dependencies=[Depends(require_admin)])
+async def edit_manual_event(
+    event_id: int,
+    body: ManualEventEditBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Change a hand-added event.
+
+    Restricted to is_manually_created rows, for the same reason the delete below is. A
+    scrape writes its own values back over a matched row -- `row.name = se.name` and the
+    rest -- so an edit to a scraped event lasts until the next cycle and then reverts.
+    Correcting one of those means correcting it at the source, or overriding the fields
+    the admin already has dedicated endpoints for.
+
+    The venue may be changed to any venue, including a scraped one: a show the scraper
+    missed at a real venue is exactly the case hand-adding exists for.
+
+    Event.hash is recomputed whenever the venue, date or name moves, because it is
+    derived from all three and is the unique key the manual-add clash check reads. Left
+    stale it would let the same show be added twice by hand without complaint.
+    """
+    event = await session.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if not event.is_manually_created:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f'"{event.name}" came from a scraper, not from this form. An edit here '
+                "would be overwritten on the next scrape."
+            ),
+        )
+
+    given = body.model_fields_set
+
+    venue = await session.get(Venue, event.venue_id)
+    if "venue_id" in given:
+        venue = await session.get(Venue, body.venue_id)
+        if not venue:
+            raise HTTPException(status_code=404, detail="Venue not found")
+
+    on = event.date
+    if "date" in given:
+        try:
+            on = date.fromisoformat((body.date or "")[:10])
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail=f"{body.date!r} is not a date like 2026-09-30."
+            )
+        latest = date(date.today().year + MANUAL_EVENT_MAX_YEARS_AHEAD, 12, 31)
+        if on > latest:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{on.isoformat()} is further ahead than {latest.isoformat()}.",
+            )
+
+    name = event.name
+    if "name" in given:
+        name = (body.name or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="A name is required.")
+
+    # Rebuilt rather than hand-edited: ScrapedEvent owns the normalisation and the hash
+    # rule, and duplicating either here is how the two drift apart.
+    rehash = any(k in given for k in ("venue_id", "date", "name"))
+    if rehash:
+        probe = ScrapedEvent(name=name, date=on, venue_slug=venue.slug, source="manual")
+        clash = (await session.execute(
+            select(Event).where(Event.hash == probe.hash, Event.id != event_id)
+        )).scalar_one_or_none()
+        if clash:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f'"{clash.name}" on {clash.date.isoformat()} is already on the '
+                    f"calendar at this venue (event {clash.id})."
+                ),
+            )
+        event.hash = probe.hash
+        event.name = probe.name          # ScrapedEvent ran clean_title over it
+        event.date = on
+        event.venue_id = venue.id
+
+    price_min = body.price_min if "price_min" in given else event.price_min
+    price_max = body.price_max if "price_max" in given else event.price_max
+    if price_min is not None and price_max is not None and price_max < price_min:
+        raise HTTPException(status_code=400, detail="The highest price is below the lowest.")
+
+    if "artist" in given:
+        event.artist = clean_title(body.artist) or None
+    if "support_artists" in given:
+        event.support_artists = clean_title(body.support_artists) or None
+    if "doors_time" in given:
+        event.doors_time = _parse_time(body.doors_time, "doors_time")
+    if "show_time" in given:
+        event.show_time = _parse_time(body.show_time, "show_time")
+    if "ticket_url" in given:
+        event.ticket_url = (body.ticket_url or "").strip() or None
+    if "price_min" in given:
+        event.price_min = body.price_min
+    if "price_max" in given:
+        event.price_max = body.price_max
+    if "description" in given:
+        event.description = (body.description or "").strip() or None
+    if "genre" in given:
+        event.genre = (body.genre or "").strip() or None
+    if "age_restriction" in given:
+        event.age_restriction = (body.age_restriction or "").strip() or None
+
+    await session.commit()
+    logger.info(f"[admin] edited manual event {event_id} {event.name!r} ({sorted(given)})")
+    return {
+        "ok": True,
+        "id": event.id,
+        "name": event.name,
+        "date": event.date.isoformat(),
+        "venue_id": event.venue_id,
         "venue_name": venue.name,
     }
 
