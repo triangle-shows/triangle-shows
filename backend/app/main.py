@@ -249,13 +249,11 @@ ALLOWED_ORIGINS = [
 # document is never served from that origin and a browser never sends it.
 #
 # Local origins only outside production, so a deployment cannot end up trusting localhost.
-# Port 8080 is the static preview server; *.localhost covers durm-shows.localhost, which is
-# how the Durham variant is opened locally (see frontend/js/config.js).
+# The frontend-only preview (tools/preview_server.py) needs no entry: it passes API reads
+# through itself, so the page's requests are same-origin. The old :8080 entries served a
+# preview that pointed at production, where they were never in effect.
 if settings.APP_ENV != "production":
     ALLOWED_ORIGINS += [
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "http://durm-shows.localhost:8080",
         "http://localhost:8000",
     ]
 
