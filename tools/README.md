@@ -2,6 +2,19 @@
 
 Dev and ops scripts for triangle-shows, plus the design mockups. Scripts are run from the repo root.
 
+## Local preview
+
+### `preview_server.py`
+Serves `frontend/` on localhost and passes API reads through to production, so frontend changes can be tried against real events without Docker or a local database. The page only talks to localhost, so production's CORS allowlist (which excludes localhost) never applies. Forwards GET/HEAD only, so it can't write to production. Admin pages don't work through it.
+
+```
+python tools/preview_server.py                              # http://localhost:8090
+python tools/preview_server.py --port 8091
+python tools/preview_server.py --upstream http://localhost:8000
+```
+
+The Durham variant is at http://durm-shows.localhost:8090.
+
 ## Deployment
 
 ### `wait_for_deploy.py`
