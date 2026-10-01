@@ -1175,18 +1175,21 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
 .btn-restore-hidden {
   display: inline-block;
   padding: 0.38rem 0.85rem;
-  font-family: 'Space Mono', monospace;
-  font-size: 0.62rem;
-  font-weight: 700;
+  /* The calendar's data face at the token size for buttons. Space Mono at ~10px bold
+     caps was the hardest text on the page to read. */
+  font-family: var(--font-data);
+  font-size: var(--fs-xs);
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  background: transparent;
+  letter-spacing: 0.04em;
+  /* Solid, not transparent: the bar floats over the calendar, and a see-through button
+     let event titles show through behind its label. */
+  background: var(--bg);
   border: 1px solid var(--accent);
   color: var(--accent);
   cursor: pointer;
   border-radius: 1px;
   transition: background 0.15s, color 0.15s;
-  opacity: 0.72;
 }
 .btn-favorites-only:hover,
 .btn-download-shows:hover,
@@ -1196,13 +1199,14 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   color: var(--bg);
   opacity: 1;
 }
-/* Restore button: slightly subdued by default */
-.btn-restore-hidden { opacity: 0.55; }
+/* Restore button: slightly subdued by default. Subdued by colour rather than opacity,
+   which would make the background see-through again. */
+.btn-restore-hidden { border-color: var(--border); color: var(--muted); }
 
 /* Poster button disabled state — it carries a "drawing..." label while the canvas is
    rendered, and must not look pressable during that. */
 .btn-lineup-graphic:disabled { opacity: 0.4; cursor: progress; }
-.btn-lineup-graphic:disabled:hover { background: transparent; color: var(--accent); }
+.btn-lineup-graphic:disabled:hover { background: var(--bg); color: var(--accent); }
 
 /* === Lineup poster preview === */
 .lineup-overlay {
