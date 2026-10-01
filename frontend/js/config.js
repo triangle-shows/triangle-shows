@@ -1,23 +1,12 @@
 // API configuration
 //
-// Frontend-only preview escape hatch. `python -m http.server 8080` inside frontend/ serves
-// the static files with no API behind them, so port 8080 on localhost reads from
-// production instead. Scoped to that exact port on purpose: the docker-compose stack
-// serves the real app on :8000 and must keep talking to its own local API.
-// CORS permits this — allow_origins is "*" with allow_credentials off.
-// Any *.localhost name is covered too, not just "localhost" itself: browsers resolve the
-// whole suffix to loopback, and the Durham variant is previewed at
-// durm-shows.localhost:8080, which would otherwise fall through to its own origin and
-// find no API there.
-const _isLoopbackHost =
-  location.hostname === "localhost" ||
-  location.hostname === "127.0.0.1" ||
-  location.hostname.endsWith(".localhost");
-
-const API_BASE =
-  _isLoopbackHost && location.port === "8080"
-    ? "https://triangle-shows.net"
-    : window.location.origin;
+// Always same-origin. For a frontend-only preview against real events, run
+// `python tools/preview_server.py`: it serves frontend/ on localhost:8090 and passes API
+// reads through to production itself, so the page never makes a cross-origin request.
+// (This used to point localhost:8080 straight at production, which stopped working once
+// production's CORS allowlist excluded localhost -- see ALLOWED_ORIGINS in
+// backend/app/main.py.)
+const API_BASE = window.location.origin;
 
 // Spotify — paste your Client ID from https://developer.spotify.com/dashboard
 // Register redirect URIs: https://triangle-shows.org and http://localhost:8000
@@ -173,7 +162,7 @@ window.addEventListener("resize", fitAsciiTitle);
 // variant is to deploy and visit it.
 // durm-shows.localhost is here so the Durham variant can be opened locally. Browsers
 // resolve *.localhost to the loopback address without a hosts-file entry, so
-// http://durm-shows.localhost:8080 reaches the local preview server and picks the variant
+// http://durm-shows.localhost:8090 reaches the local preview server and picks the variant
 // up from the hostname. Harmless in production: the name is unreachable from anywhere
 // except the machine serving it.
 const DURM_HOSTS = ["durm-shows.net", "www.durm-shows.net", "durm-shows.localhost"];

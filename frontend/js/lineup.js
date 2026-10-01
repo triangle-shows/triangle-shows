@@ -781,6 +781,23 @@
         }
       };
       actions.appendChild(share);
+    } else if (canCopyImage()) {
+      // The fallback for browsers that can't share a file -- Firefox on desktop and
+      // Android, chiefly. A copied image pastes straight into a message or a post, which
+      // is most of what the share sheet would have been used for.
+      const copy = document.createElement("button");
+      copy.className = "lineup-btn";
+      copy.textContent = "⧉ copy image";
+      copy.onclick = async () => {
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+          flashLabel(copy, "✓ copied");
+        } catch (err) {
+          console.warn("Copy failed:", err);
+          flashLabel(copy, "couldn't copy - try save");
+        }
+      };
+      actions.appendChild(copy);
     }
 
     const close = document.createElement("button");
@@ -795,6 +812,25 @@
     document.body.appendChild(overlay);
     document.addEventListener("keydown", _onKeydown);
     save.focus();
+  }
+
+  /** Whether this browser can put a PNG on the clipboard. Needs the async Clipboard API
+   *  (secure contexts only) and ClipboardItem, which Firefox gained in version 127. */
+  function canCopyImage() {
+    return Boolean(
+      typeof ClipboardItem === "function" &&
+      navigator.clipboard && typeof navigator.clipboard.write === "function" &&
+      (typeof ClipboardItem.supports !== "function" || ClipboardItem.supports("image/png"))
+    );
+  }
+
+  /** Show `text` on a button for a moment, then put its label back. */
+  function flashLabel(btn, text) {
+    const label = btn.dataset.label || btn.textContent;
+    btn.dataset.label = label;
+    btn.textContent = text;
+    clearTimeout(btn._flashTimer);
+    btn._flashTimer = setTimeout(() => { btn.textContent = label; }, 2000);
   }
 
   function _asFile(blob, filename) {
