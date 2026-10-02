@@ -22,6 +22,18 @@ from app.scrapers.base import BaseScraper, ScrapedEvent, BROWSER_HEADERS
 # --- Module-level setup ---
 logger = logging.getLogger(__name__)
 
+MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+
+# "Fri, " / "Friday " / "Thurs. " ahead of the date
+_WEEKDAY_PREFIX = re.compile(r"(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\w*\.?,?\s*", re.IGNORECASE)
+# "Jan 08" / "January 8" / "Sept. 3"
+_MONTH_DAY = re.compile(r"([A-Za-z]{3})[A-Za-z]*\.?\s+(\d{1,2})")
+
 
 # --- Scraper class ---
 
@@ -39,6 +51,8 @@ class RHPEventsScraper(BaseScraper):
 
         # venue_filter narrows results to a specific venue on shared RHP listing pages
         venue_filter = self.config.get("venue_filter")
+        # One "today" for the whole run, so the year inference cannot straddle midnight
+        today = date.today()
         events = []
         page = 1
         max_pages = 10  # Safety cap to avoid infinite pagination loops
@@ -71,7 +85,7 @@ class RHPEventsScraper(BaseScraper):
                     break
 
                 for wrapper in wrappers:
-                    parsed = self._parse_event(wrapper, venue_filter)
+                    parsed = self._parse_event(wrapper, venue_filter, today)
                     if parsed:
                         events.append(parsed)
 
@@ -84,7 +98,9 @@ class RHPEventsScraper(BaseScraper):
         logger.info(f"[RHP] Found {len(events)} events for {self.venue_slug}")
         return events
 
-    def _parse_event(self, wrapper, venue_filter: Optional[str]) -> Optional[ScrapedEvent]:
+    def _parse_event(
+        self, wrapper, venue_filter: Optional[str], today: Optional[date] = None
+    ) -> Optional[ScrapedEvent]:
         """Parse a single event wrapper element into a ScrapedEvent, or return None if it should be skipped."""
         try:
             # --- Venue filtering ---
@@ -140,7 +156,7 @@ class RHPEventsScraper(BaseScraper):
 
                 if not event_date:
                     date_text = date_el.get_text(strip=True)
-                    event_date = self._parse_date_text(date_text)
+                    event_date = self._parse_date_text(date_text, today)
 
             if not event_date:
                 # Without a date the event is unusable — skip it
@@ -244,11 +260,15 @@ class RHPEventsScraper(BaseScraper):
     # --- Date parsing helper ---
 
     @staticmethod
-    def _parse_date_text(text: str) -> Optional[date]:
+    def _parse_date_text(text: str, today: Optional[date] = None) -> Optional[date]:
         """Parse date from various text formats."""
         text = text.strip()
-        # Clean common prefixes
-        text = re.sub(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\w*,?\s*', '', text).strip()
+        # Clean common prefixes, keeping the weekday: it is what pins the year below
+        weekday = None
+        prefix = _WEEKDAY_PREFIX.match(text)
+        if prefix:
+            weekday = WEEKDAYS[prefix.group(1).lower()]
+            text = text[prefix.end():].strip()
         # Try common formats
         formats = [
             "%B %d, %Y",      # January 15, 2025
@@ -264,11 +284,14 @@ class RHPEventsScraper(BaseScraper):
                 return datetime.strptime(text, fmt).date()
             except ValueError:
                 continue
-        # Try month+day only (no year) — assume current year
-        for fmt in ("%B %d", "%b %d"):
-            try:
-                parsed = datetime.strptime(text, fmt)
-                return parsed.replace(year=datetime.now().year).date()
-            except ValueError:
-                continue
+        # Month and day only. This is the common case, not a fallback: the listing pages
+        # render "Fri, Jan 08" with no year and no datetime attribute. Assuming the current
+        # year filed every January-onward show a year early, in the past.
+        month_day = _MONTH_DAY.fullmatch(text)
+        if month_day:
+            month = MONTHS.get(month_day.group(1).lower()[:3])
+            if month:
+                return BaseScraper.infer_year(
+                    month, int(month_day.group(2)), today or date.today(), weekday
+                )
         return None

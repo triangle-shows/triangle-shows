@@ -201,31 +201,7 @@ class InstantSeatsScraper(BaseScraper):
             if (line_month, line_day) == (month, day):
                 weekday = WEEKDAYS[weekday_match.group(1).lower()]
 
-        candidates = []
-        for year in (today.year, today.year + 1):
-            try:
-                candidates.append(date(year, month, day))
-            except ValueError:
-                continue  # 29 February in a common year
-        if not candidates:
-            return None
-
-        if weekday is not None:
-            matching = [d for d in candidates if d.weekday() == weekday]
-            if matching:
-                return matching[0]
-            # Nothing matched. The site changed shape, or the listing is simply wrong; fall
-            # through to the date-only rule rather than dropping a real event over it.
-            logger.warning(
-                f"[InstantSeats] Weekday in listing matches no candidate year for {month}/{day}"
-            )
-
-        # A listing more than a week past is next year's show far more often than it is a
-        # genuinely stale one, which is the same rule the Carolina Theatre scraper uses.
-        for candidate in candidates:
-            if (candidate - today).days >= -7:
-                return candidate
-        return candidates[-1]
+        return BaseScraper.infer_year(month, day, today, weekday)
 
     @staticmethod
     def _disambiguate_same_night_sets(events: list[ScrapedEvent]) -> list[ScrapedEvent]:

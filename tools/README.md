@@ -45,6 +45,14 @@ python tools/import_submissions.py
 python tools/import_submissions.py --dry-run
 ```
 
+### `fix_rhp_years.py`
+One-off cleanup for RHP venues (Cat's Cradle, Lincoln Theatre, Local 506) whose year-less dates were filed a year early by the old scraper. Moves each misfiled row onto its real date, or deletes it if the corrected scrape already inserted that row. Dry-run by default; needs `DATABASE_URL`. Run it after the scraper fix is deployed. Before then, the next scrape files them a year early again.
+
+```
+python tools/fix_rhp_years.py
+python tools/fix_rhp_years.py --apply
+```
+
 ## Scraper Debugging
 
 These were written to diagnose scraper issues for specific venues. They're one-off scripts rather than maintained tools, but useful as references when building a new scraper.

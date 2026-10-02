@@ -9,12 +9,15 @@ Requires: No env vars or external services — pure Python stdlib only.
 """
 import hashlib
 import html
+import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import date, time, datetime
 from typing import Optional
 from urllib.parse import unquote
+
+logger = logging.getLogger(__name__)
 
 
 # --- Title normalization ---
@@ -221,6 +224,41 @@ class BaseScraper(ABC):
             if 0 <= h <= 23 and 0 <= m <= 59:
                 return time(h, m)
         return None
+
+    @staticmethod
+    def infer_year(month: int, day: int, today: date, weekday: Optional[int] = None) -> Optional[date]:
+        """Resolve a listing's month and day, which state no year, to a date.
+
+        A weekday (0 = Monday, as date.weekday()) pins the year exactly when the listing
+        gives one: a given month and day falls on a different weekday in any two
+        consecutive years, so at most one candidate can match. Without one, or when none
+        matches, a date more than a week past is read as next year's show — far more often
+        that than a genuinely stale listing.
+
+        The candidates are this year and next, not a parse against a default year:
+        strptime's default is 1900, a common year, so it rejects 29 February outright.
+        """
+        candidates = []
+        for year in (today.year, today.year + 1):
+            try:
+                candidates.append(date(year, month, day))
+            except ValueError:
+                continue  # 29 February in a common year, or a day the month doesn't have
+        if not candidates:
+            return None
+
+        if weekday is not None:
+            matching = [d for d in candidates if d.weekday() == weekday]
+            if matching:
+                return matching[0]
+            # Nothing matched. The site changed shape, or the listing is simply wrong; fall
+            # through to the date-only rule rather than dropping a real event over it.
+            logger.warning(f"Weekday in listing matches no candidate year for {month}/{day}")
+
+        for candidate in candidates:
+            if (candidate - today).days >= -7:
+                return candidate
+        return candidates[-1]
 
     @staticmethod
     def normalize_name(name: str) -> str:
