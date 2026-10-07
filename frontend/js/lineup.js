@@ -718,6 +718,17 @@
     return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
   }
 
+  /** The PNG as a data: URL, from the bytes already encoded rather than a second
+   *  toDataURL() pass over the canvas. */
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
   function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -729,24 +740,17 @@
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
 
-  // The object URL behind the preview image, released when the preview closes.
-  let _previewUrl = null;
-
   function closeLineup() {
     const el = document.getElementById("lineup-overlay");
     if (el) el.remove();
     document.removeEventListener("keydown", _onKeydown);
-    if (_previewUrl) {
-      URL.revokeObjectURL(_previewUrl);
-      _previewUrl = null;
-    }
   }
 
   function _onKeydown(e) {
     if (e.key === "Escape") closeLineup();
   }
 
-  function openPreview(canvas, blob, filename) {
+  function openPreview(canvas, blob, dataUrl, filename) {
     closeLineup();
 
     const overlay = document.createElement("div");
@@ -764,9 +768,13 @@
     // image, Save image -- and a canvas gets no such menu. On Firefox for Android, which
     // can neither share a file from a page nor copy an image, that menu is the quickest
     // way to get the poster into another app.
+    //
+    // A data: URL rather than a blob: one. That menu hands the image's address to the
+    // browser's own share and download code, outside the page; a blob: URL means
+    // nothing out there, while a data: URL carries the image with it. About a third
+    // larger as text, which for one poster costs nothing that matters.
     const poster = document.createElement("img");
-    _previewUrl = URL.createObjectURL(blob);
-    poster.src = _previewUrl;
+    poster.src = dataUrl;
     poster.width = canvas.width;
     poster.height = canvas.height;
     poster.alt = "Poster of your upcoming shows";
@@ -895,7 +903,7 @@
       const canvas = renderPoster(events, readTheme(), readSite());
       const blob = await canvasToBlob(canvas);
       if (!blob) return;
-      openPreview(canvas, blob, posterFilename(today));
+      openPreview(canvas, blob, await blobToDataUrl(blob), posterFilename(today));
     } catch (err) {
       console.error("Could not build the lineup poster:", err);
     } finally {
