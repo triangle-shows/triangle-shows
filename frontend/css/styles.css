@@ -1280,15 +1280,21 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
   gap: 0.9rem;
   max-height: 100%;
 }
-/* The canvas is 1080x1350 regardless of screen; height drives the fit so the whole
+/* The poster is 1080x1350 regardless of screen; height drives the fit so the whole
    poster is visible without scrolling, which is the point of a preview. */
-.lineup-canvas {
+.lineup-poster {
   max-height: calc(100vh - 8rem);
   max-width: 100%;
   height: auto;
   width: auto;
   border: 1px solid var(--border);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.lineup-hint {
+  margin: 0;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.68rem;
+  color: var(--muted);
 }
 .lineup-actions {
   display: flex;

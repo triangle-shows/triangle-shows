@@ -729,10 +729,17 @@
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
 
+  // The object URL behind the preview image, released when the preview closes.
+  let _previewUrl = null;
+
   function closeLineup() {
     const el = document.getElementById("lineup-overlay");
     if (el) el.remove();
     document.removeEventListener("keydown", _onKeydown);
+    if (_previewUrl) {
+      URL.revokeObjectURL(_previewUrl);
+      _previewUrl = null;
+    }
   }
 
   function _onKeydown(e) {
@@ -752,8 +759,19 @@
     const panel = document.createElement("div");
     panel.className = "lineup-panel";
 
-    canvas.className = "lineup-canvas";
-    panel.appendChild(canvas);
+    // The finished PNG as an <img>, not the canvas it was drawn on. It looks the same,
+    // but pressing and holding an image opens the browser's own image menu -- Share
+    // image, Save image -- and a canvas gets no such menu. On Firefox for Android, which
+    // can neither share a file from a page nor copy an image, that menu is the quickest
+    // way to get the poster into another app.
+    const poster = document.createElement("img");
+    _previewUrl = URL.createObjectURL(blob);
+    poster.src = _previewUrl;
+    poster.width = canvas.width;
+    poster.height = canvas.height;
+    poster.alt = "Poster of your upcoming shows";
+    poster.className = "lineup-poster";
+    panel.appendChild(poster);
 
     const actions = document.createElement("div");
     actions.className = "lineup-actions";
@@ -798,6 +816,13 @@
         }
       };
       actions.appendChild(copy);
+    } else if (global.matchMedia && global.matchMedia("(pointer: coarse)").matches) {
+      // A phone with neither button -- Firefox for Android, chiefly. Without this the
+      // press-and-hold menu is there but nothing says so.
+      const hint = document.createElement("p");
+      hint.className = "lineup-hint";
+      hint.textContent = "Press and hold the poster to share it.";
+      panel.appendChild(hint);
     }
 
     const close = document.createElement("button");
