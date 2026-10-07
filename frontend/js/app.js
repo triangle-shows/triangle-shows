@@ -13,10 +13,18 @@ const KOFI_PITCHES = [
 ];
 
 document.addEventListener("DOMContentLoaded", function () {
-  // Restore saved palette
+  // Offer seasonal swatches only in their month.
+  document.querySelectorAll(".palette-btn").forEach((btn) => {
+    btn.hidden = !isPaletteInSeason(btn.dataset.palette);
+  });
+
+  // Restore saved palette; failing that, the seasonal default if there is one.
   const savedPalette = localStorage.getItem("triangle-shows-palette");
-  if (savedPalette && PALETTES[savedPalette]) {
+  const seasonal = seasonalDefaultPalette();
+  if (savedPalette && PALETTES[savedPalette] && isPaletteInSeason(savedPalette)) {
     applyPalette(savedPalette);
+  } else if (seasonal) {
+    applyPalette(seasonal, { persist: false });
   }
 
   // Restore saved mode, or detect OS preference

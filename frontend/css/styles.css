@@ -105,6 +105,23 @@ html[data-palette="durham"] {
   --today-bg:     rgba(191,106,40,0.06);
 }
 
+/* Halloween (October only -- see SEASONAL_PALETTES in config.js): pumpkin on a
+   purple-black, bone text, witchy-purple secondary text. --surface2 is kept darker than
+   durham's, the lightest dark tile the venue rule colours are tuned against. */
+html[data-palette="halloween"] {
+  --bg:           #0d0812;
+  --surface:      #160d1c;
+  --surface2:     #1e1226;
+  --border:       #34203f;
+  --text:         #f0e6d8;
+  --muted:        #9a78b0;
+  --dim:          #4a2c5a;
+  --accent:       #ff7a1a;
+  --accent-hover: #ffa04d;
+  --accent-bg:    rgba(255,122,26,0.12);
+  --today-bg:     rgba(255,122,26,0.06);
+}
+
 /* === Light mode palette overrides ===
    data-mode="light" triggers warm-paper versions of each accent family.
    Compound selectors [data-mode="light"][data-palette="..."] have higher
@@ -166,6 +183,22 @@ html[data-mode="light"][data-palette="wisteria"] {
   --today-bg:     rgba(136,40,168,0.06);
 }
 
+/* Halloween light: parchment, burnt orange, purple-black text. Accent is darker than the
+   dark-mode pumpkin to clear 4.5:1 as button text on parchment (5.46). */
+html[data-mode="light"][data-palette="halloween"] {
+  --bg:           #fbf3e6;
+  --surface:      #f5e6d0;
+  --surface2:     #eed8b8;
+  --border:       #d8bc94;
+  --text:         #1e0f24;
+  --muted:        #5e3878;
+  --dim:          #c0a080;
+  --accent:       #a84400;
+  --accent-hover: #8f3800;
+  --accent-bg:    rgba(168,68,0,0.10);
+  --today-bg:     rgba(168,68,0,0.06);
+}
+
 /* === Equalizer favorite color =============================================
    Order matters and the specificities are deliberate. The two single-attribute rules
    are both (0,1,1), so wisteria is written second to win in dark mode; the compound
@@ -188,6 +221,17 @@ html[data-palette="wisteria"] {
 html[data-mode="light"][data-palette="wisteria"] {
   --eq-fav:       #1f7fa8;
   --eq-fav-hover: #12617f;
+}
+
+/* Halloween: slime green for hearted shows. Off-palette like the pink it replaces, and
+   pink would muddy against the purple. Measured: bars 12.6:1 dark / 3.92:1 light on --bg. */
+html[data-palette="halloween"] {
+  --eq-fav:       #8fe36b;
+  --eq-fav-hover: #b2f08f;
+}
+html[data-mode="light"][data-palette="halloween"] {
+  --eq-fav:       #3d8a26;
+  --eq-fav-hover: #2f6e1c;
 }
 
 /* The "strong" favourite colour: same hue family as --eq-fav, taken darker.
@@ -213,6 +257,15 @@ html[data-palette="wisteria"] {
 html[data-mode="light"][data-palette="wisteria"] {
   --fav-strong:       #12617f;
   --fav-strong-hover: #0d4d66;
+}
+/* Halloween: button label 12.6 dark / 6.01 light; heart on tile 11.4 dark / 4.77 light. */
+html[data-palette="halloween"] {
+  --fav-strong:       #8fe36b;
+  --fav-strong-hover: #b2f08f;
+}
+html[data-mode="light"][data-palette="halloween"] {
+  --fav-strong:       #2a6a18;
+  --fav-strong-hover: #1f5212;
 }
 
 /* Durham Bulls light: warm desaturated brown bg, navy text */
