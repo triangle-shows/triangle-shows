@@ -28,6 +28,7 @@ from app import tokens
 from app.api.admin import (
     MAX_PENDING_PER_SUBMITTER,
     SubmissionBody,
+    _slugify,
     clean_submission,
     resolve_submission_venue,
 )
@@ -45,6 +46,10 @@ SUBMIT_PREFIX = "/new-shows-form"
 # runs can exercise the whole flow and the rows still say where they came from.
 LOCAL_SUBMITTER = "local-dev@localhost"
 
+# Arbitrary key for the Postgres advisory lock that serializes new submissions. Any
+# constant works as long as nothing else in the app takes the same one.
+SUBMISSION_LOCK_KEY = 0x5B_5B_01
+
 router = APIRouter(prefix=SUBMIT_PREFIX, tags=["submissions"])
 
 
@@ -55,6 +60,21 @@ def is_submit_path(path: str) -> bool:
     catch an unrelated /new-shows-formerly.
     """
     return path == SUBMIT_PREFIX or path.startswith(SUBMIT_PREFIX + "/")
+
+
+def show_key(name: str, on: date, venue_slug: str) -> str:
+    """The calendar's identity for a show, as a scraper or a hand-add would compute it.
+
+    Used for both "already" checks, so a pending submission counts as the same show as
+    another exactly when approving both would collide on the same Event hash: "Sub-Rosa"
+    and "Sub Rosa" are one show, as are names differing only in case or HTML encoding.
+    """
+    return ScrapedEvent(name=name, date=on, venue_slug=venue_slug, source="manual").hash
+
+
+def submission_venue_slug(s: ShowSubmission) -> str:
+    """The slug a submission's venue has, or will have once approval creates it."""
+    return s.venue.slug if s.venue else _slugify(s.new_venue_name or "")
 
 
 async def require_submitter(request: Request) -> str:
@@ -141,6 +161,14 @@ async def create_submission(
     values = clean_submission(body, earliest=date.today())
     venue = await resolve_submission_venue(session, values)
 
+    # Held until this request's transaction ends, so the count-then-insert below and the
+    # duplicate checks cannot interleave with another submission's: without it, parallel
+    # requests from someone with 19 pending would each count 19 and all be saved, and two
+    # people sending the same show at once would both pass the duplicate check. One lock
+    # for everyone rather than one per submitter, because the second case crosses
+    # submitters; the form sees a handful of submissions a day, so nobody waits on it.
+    await session.execute(select(func.pg_advisory_xact_lock(SUBMISSION_LOCK_KEY)))
+
     pending = (await session.execute(
         select(func.count()).select_from(ShowSubmission).where(
             ShowSubmission.submitted_by == who,
@@ -156,36 +184,40 @@ async def create_submission(
             ),
         )
 
-    # Two "already" checks, only possible at a listed venue: a proposed venue cannot
-    # have anything on the calendar yet. Both save the submitter a wait for an answer
-    # that is already known, and save the admin a duplicate to reject.
+    # Two "already" checks. Both save the submitter a wait for an answer that is already
+    # known, and save the admin a duplicate to reject.
+    venue_slug = venue.slug if venue is not None else _slugify(values["new_venue_name"])
+    key = show_key(values["name"], values["date"], venue_slug)
+
+    # Only a listed venue can have anything on the calendar yet.
     if venue is not None:
-        # Same hash a scraper or a hand-add would compute, so "the same show" means
-        # what it means everywhere else in the app.
-        probe = ScrapedEvent(
-            name=values["name"], date=values["date"], venue_slug=venue.slug, source="manual"
-        )
         existing = (await session.execute(
-            select(Event).where(Event.hash == probe.hash)
+            select(Event).where(Event.hash == key)
         )).scalar_one_or_none()
         if existing:
             raise HTTPException(
                 status_code=409,
                 detail=f'"{existing.name}" on {existing.date.isoformat()} is already on the calendar.',
             )
-        queued = (await session.execute(
-            select(ShowSubmission.id).where(
-                ShowSubmission.venue_id == venue.id,
-                ShowSubmission.date == values["date"],
-                func.lower(ShowSubmission.name) == values["name"].lower(),
-                ShowSubmission.status == SubmissionStatus.pending.value,
-            ).limit(1)
-        )).scalar_one_or_none()
-        if queued:
-            raise HTTPException(
-                status_code=409,
-                detail="Someone has already sent this show in. It's waiting for review.",
-            )
+
+    # Anything can already be in the queue, at a listed venue or a proposed one. The hash
+    # cannot be matched in SQL — submissions do not store one — so every pending row on
+    # that date is compared here; there are only ever a few.
+    same_day = (await session.execute(
+        select(ShowSubmission)
+        .options(joinedload(ShowSubmission.venue))
+        .where(
+            ShowSubmission.date == values["date"],
+            ShowSubmission.status == SubmissionStatus.pending.value,
+        )
+    )).unique().scalars().all()
+    if any(
+        show_key(s.name, s.date, submission_venue_slug(s)) == key for s in same_day
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Someone has already sent this show in. It's waiting for review.",
+        )
 
     submission = ShowSubmission(submitted_by=who, **values)
     session.add(submission)

@@ -1556,12 +1556,17 @@ def clean_submission(body: SubmissionBody, *, earliest: date) -> dict:
 
     # Refused rather than dropped. ScrapedEvent would quietly discard a bad link at
     # approval, which for a scraper is right — one bad field must not lose the event — but
-    # a person typing into a form should hear that "www.example.com" needs its https://.
+    # a person typing into a form should hear that "www.example.com" needs its scheme.
+    # http:// is allowed, as it is for a hand-add: some small venues' sites have no https,
+    # and every submission is seen by an admin before anything is published.
     for key, label in (("ticket_url", "ticket link"), ("new_venue_website", "venue website")):
         if values[key] and not _validate_absolute_http_url(values[key]):
             raise HTTPException(
                 status_code=400,
-                detail=f"The {label} has to be a full address starting with https://.",
+                detail=(
+                    f"The {label} has to be a full address starting with "
+                    "http:// or https://."
+                ),
             )
 
     values.update(

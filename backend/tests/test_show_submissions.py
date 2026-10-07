@@ -209,6 +209,7 @@ class _Session:
         self.rows = rows or {}
         self.results = list(results or [])
         self.added = []
+        self.statements = []
         self.committed = False
         self._next_id = 900
 
@@ -216,6 +217,7 @@ class _Session:
         return self.rows.get((model.__name__, pk))
 
     async def execute(self, statement, *a, **kw):
+        self.statements.append(statement)
         return _Result(self.results.pop(0) if self.results else None)
 
     def add(self, obj):
@@ -306,7 +308,17 @@ class TestCleanSubmission:
         """ScrapedEvent would silently drop it at approval; a person should hear about it."""
         with pytest.raises(HTTPException) as exc:
             clean_submission(_body(ticket_url="www.example.org"), earliest=date.today())
-        assert "https://" in exc.value.detail
+        assert "http:// or https://" in exc.value.detail
+
+    def test_http_and_https_links_are_both_kept(self):
+        """Some small venues' sites have no https; an admin sees every link anyway."""
+        for url in ("http://example.org/x", "HTTPS://example.org/x"):
+            values = clean_submission(_body(venue_id=None, new_venue_name="X",
+                                            new_venue_city="Durham", new_venue_website=url,
+                                            ticket_url=url),
+                                      earliest=date.today())
+            assert values["ticket_url"] == url
+            assert values["new_venue_website"] == url
 
     def test_a_javascript_link_is_refused(self):
         with pytest.raises(HTTPException):
@@ -364,8 +376,8 @@ class TestResolveVenue:
 
 class TestCreateSubmission:
     def test_a_submission_is_recorded_against_its_submitter(self):
-        # pending count, hash probe, queued-duplicate probe
-        session = _Session({("Venue", 1): _venue()}, results=[0, None, None])
+        # lock, pending count, calendar probe, same-day pending rows
+        session = _Session({("Venue", 1): _venue()}, results=[None, 0, None, []])
         out = run(submissions.create_submission(_body(), who="fan@example.org", session=session))
         assert out["ok"]
         (row,) = session.added
@@ -375,14 +387,14 @@ class TestCreateSubmission:
         assert session.committed
 
     def test_nothing_touches_the_events_table(self):
-        session = _Session({("Venue", 1): _venue()}, results=[0, None, None])
+        session = _Session({("Venue", 1): _venue()}, results=[None, 0, None, []])
         run(submissions.create_submission(_body(), who="fan@example.org", session=session))
         assert not any(isinstance(o, (Event, Venue)) for o in session.added)
 
     def test_a_show_already_on_the_calendar_is_refused(self):
         existing = Event()
         existing.name, existing.date = "Sub Rosa", SOON
-        session = _Session({("Venue", 1): _venue()}, results=[0, existing])
+        session = _Session({("Venue", 1): _venue()}, results=[None, 0, existing])
         with pytest.raises(HTTPException) as exc:
             run(submissions.create_submission(_body(), who="fan@example.org", session=session))
         assert exc.value.status_code == 409
@@ -390,15 +402,51 @@ class TestCreateSubmission:
         assert not session.committed
 
     def test_a_show_already_waiting_is_refused(self):
-        session = _Session({("Venue", 1): _venue()}, results=[0, None, 42])
+        queued = _submission(venue_id=1)
+        queued.venue = _venue()
+        session = _Session({("Venue", 1): _venue()}, results=[None, 0, None, [queued]])
         with pytest.raises(HTTPException) as exc:
             run(submissions.create_submission(_body(), who="fan@example.org", session=session))
         assert exc.value.status_code == 409
         assert "waiting for review" in exc.value.detail
 
+    def test_a_waiting_show_matches_the_way_the_calendar_does(self):
+        """Approving both would collide on one Event hash, so the second is refused now."""
+        queued = _submission(venue_id=1, name="Sub-Rosa")
+        queued.venue = _venue()
+        session = _Session({("Venue", 1): _venue()}, results=[None, 0, None, [queued]])
+        with pytest.raises(HTTPException) as exc:
+            run(submissions.create_submission(_body(name="sub rosa"), who="b@example.org",
+                                              session=session))
+        assert exc.value.status_code == 409
+
+    def test_a_different_show_that_day_is_not_a_duplicate(self):
+        queued = _submission(venue_id=1, name="Wednesday")
+        queued.venue = _venue()
+        session = _Session({("Venue", 1): _venue()}, results=[None, 0, None, [queued]])
+        out = run(submissions.create_submission(_body(), who="b@example.org", session=session))
+        assert out["ok"]
+
+    def test_a_show_waiting_at_a_proposed_venue_is_refused(self):
+        queued = _submission(new_venue_name="The Pinhook", new_venue_city="Durham")
+        queued.venue = None
+        # no venue clash, lock, pending count, same-day pending rows (no calendar probe)
+        session = _Session(results=[None, None, 0, [queued]])
+        body = _body(venue_id=None, new_venue_name="The Pinhook", new_venue_city="Durham")
+        with pytest.raises(HTTPException) as exc:
+            run(submissions.create_submission(body, who="b@example.org", session=session))
+        assert exc.value.status_code == 409
+        assert "waiting for review" in exc.value.detail
+
+    def test_the_lock_is_taken_before_the_quota_is_counted(self):
+        """Otherwise parallel requests can all count 19 pending and all be saved."""
+        session = _Session({("Venue", 1): _venue()}, results=[None, 0, None, []])
+        run(submissions.create_submission(_body(), who="fan@example.org", session=session))
+        assert "pg_advisory_xact_lock" in str(session.statements[0])
+
     def test_one_persons_queue_is_capped(self):
         session = _Session({("Venue", 1): _venue()},
-                           results=[admin.MAX_PENDING_PER_SUBMITTER])
+                           results=[None, admin.MAX_PENDING_PER_SUBMITTER])
         with pytest.raises(HTTPException) as exc:
             run(submissions.create_submission(_body(), who="fan@example.org", session=session))
         assert exc.value.status_code == 429
