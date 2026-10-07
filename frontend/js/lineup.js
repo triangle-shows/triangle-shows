@@ -782,9 +782,9 @@
       };
       actions.appendChild(share);
     } else if (canCopyImage()) {
-      // The fallback for browsers that can't share a file -- Firefox on desktop and
-      // Android, chiefly. A copied image pastes straight into a message or a post, which
-      // is most of what the share sheet would have been used for.
+      // The fallback for browsers that can't share a file -- Firefox on desktop, chiefly.
+      // A copied image pastes straight into a message or a post, which is most of what
+      // the share sheet would have been used for.
       const copy = document.createElement("button");
       copy.className = "lineup-btn";
       copy.textContent = "⧉ copy image";
@@ -815,12 +815,22 @@
   }
 
   /** Whether this browser can put a PNG on the clipboard. Needs the async Clipboard API
-   *  (secure contexts only) and ClipboardItem, which Firefox gained in version 127. */
-  function canCopyImage() {
+   *  (secure contexts only) and ClipboardItem, which Firefox gained in version 127.
+   *
+   *  Never on Android. Firefox there has every one of those APIs, and
+   *  ClipboardItem.supports("image/png") answers true, but it only checks the type
+   *  against a fixed list: the Android clipboard Firefox writes to holds text alone, so
+   *  every image copy is refused. Nothing short of trying reveals that, so the platform
+   *  is the only test there is. Chrome on Android is unaffected -- it can share the
+   *  file, so it is offered the share button and never reaches this fallback.
+   *
+   *  Takes its globals as arguments so the tests can pass stand-ins. */
+  function canCopyImage(nav = global.navigator, Item = global.ClipboardItem) {
+    if (!nav || /Android/i.test(nav.userAgent || "")) return false;
     return Boolean(
-      typeof ClipboardItem === "function" &&
-      navigator.clipboard && typeof navigator.clipboard.write === "function" &&
-      (typeof ClipboardItem.supports !== "function" || ClipboardItem.supports("image/png"))
+      typeof Item === "function" &&
+      nav.clipboard && typeof nav.clipboard.write === "function" &&
+      (typeof Item.supports !== "function" || Item.supports("image/png"))
     );
   }
 
@@ -887,6 +897,7 @@
     metaLine,
     posterFilename,
     todayKey,
+    canCopyImage,
     renderPoster,
     ensureAssets,
     drawPhotoRipple,
