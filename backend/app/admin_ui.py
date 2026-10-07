@@ -227,6 +227,16 @@ ADMIN_HTML = """<!doctype html>
   .vrow button { font-family:inherit; font-size:0.68rem; padding:0.22rem 0.5rem;
           border:1px solid #3a3a3e; background:transparent; color:#c8c6c3; cursor:pointer;
           border-radius:2px; }
+  /* --- Proposed shows from /new-shows-form --- */
+  /* Blue, distinct from the amber "manual" badge: pending means "not on the calendar
+     yet", which is the one thing about these rows an admin must not misread. */
+  .b.pending { background:#1f2d3d; color:#8ab8e0; }
+  .vrow.pend { flex-wrap:wrap; border-left:2px solid #2f4a63; padding-left:0.5rem; }
+  .vrow button.ok { border-color:#2f5c40; color:#7fd69a; }
+  .vrow button.ok:hover { background:#1f3d2a; }
+  .vedit .who { color:#c8c6c3; }
+  .vedit .snv.hidden { display:none; }
+  #pendingJump { color:#8ab8e0; }
 </style>
 </head><body>
   <header>
@@ -240,7 +250,7 @@ ADMIN_HTML = """<!doctype html>
     <div class="controls">
       <button class="fbtn on" data-v="queue" onclick="setView('queue')">review queue</button>
       <button class="fbtn" data-v="duplicates" onclick="setView('duplicates')">duplicates</button>
-      <button class="fbtn" data-v="add" onclick="setView('add')">manually add events + venues</button>
+      <button class="fbtn" data-v="add" onclick="setView('add')">manually add events + venues<span id="pendingTab"></span></button>
     </div>
     <div class="controls" id="queueControls">
       <button class="fbtn on" data-f="non_live" onclick="setFilter('non_live')">non-live</button>
@@ -327,6 +337,17 @@ ADMIN_HTML = """<!doctype html>
       a row that no longer exists. And the scraper won't undo your decision: a row you've
       hidden is protected from the pass that deletes listings a venue has stopped
       advertising.</p>
+
+      <h2>Proposed shows</h2>
+      <p>People on the form's Cloudflare Access policy can propose a show at
+      <a href="/new-shows-form">/new-shows-form</a>, at a listed venue or a new one. Nothing
+      they send reaches the calendar by itself. Each one waits at the top of the hand-added
+      list on the <b>manually add</b> tab, marked <b>pending</b>, with who sent it.</p>
+      <p><b>review</b> opens it for correcting first: fix a typo, or, if they proposed a
+      "new" venue that's already listed under another name, pick the existing one so you
+      don't get a second copy. <b>approve</b> publishes it exactly as if you'd added it by
+      hand, creating the new venue too if there is one. <b>reject</b> declines it. Either
+      way the person who sent it sees the outcome on the form page.</p>
     </div>
     <table id="queueTable">
       <thead><tr><th>date</th><th>event</th><th>status</th><th>actions</th></tr></thead>
@@ -334,6 +355,7 @@ ADMIN_HTML = """<!doctype html>
     </table>
     <div id="dupes" class="hidden"></div>
     <div id="add" class="hidden">
+      <p id="pendingJump" class="hint hidden"></p>
       <h2>Add an event by hand</h2>
       <p class="hint">For anything no scraper will find — a promoter's show, a festival
       stage, a one-off at a room that doesn't publish listings. It appears on the public
@@ -835,6 +857,7 @@ ADMIN_HTML = """<!doctype html>
 
   async function loadVenues(selectId) {
     const data = await api('/admin/api/venues');
+    VENUES = data;
     const opt = (v) =>
       '<option value="' + v.id + '" data-count="' + v.upcoming_event_count + '">' +
       esc(v.name) + ' · ' + esc(v.city) + '</option>';
@@ -890,7 +913,7 @@ ADMIN_HTML = """<!doctype html>
   // -- a seeded venue is overwritten by seed_venues() on the next boot, and a scraped
   // event by the next scrape, so offering the button would be offering a silent revert.
 
-  let editing = null;   // {kind, id} or null
+  let editing = null;   // {kind: 'venue' | 'event' | 'submission', id} or null
 
   function editorField(id, label, value, type, extra) {
     return '<div class="f"><label for="' + id + '">' + label + '</label>' +
@@ -982,27 +1005,255 @@ ADMIN_HTML = """<!doctype html>
   async function loadManualLists() {
     // Every hand-added event, past ones included: a typo in last month's show is still
     // worth fixing, and they are few enough that hiding them would only mean an admin
-    // could not find one.
-    const data = await api('/admin/api/events?filter=all&show_approved=true&manual_only=true');
+    // could not find one. Pending submissions lead the same list — they become exactly
+    // these rows once approved, so a second list elsewhere would split one queue in two.
+    const [data, subs] = await Promise.all([
+      api('/admin/api/events?filter=all&show_approved=true&manual_only=true'),
+      api('/admin/api/submissions'),
+    ]);
+    SUBMISSIONS = subs.submissions || [];
+    setPendingCount(subs.count);
     const rows = data.events || [];
-    if (!rows.length) {
+    if (!rows.length && !SUBMISSIONS.length) {
       $('#manualEventList').innerHTML = '';
       return;
     }
-    $('#manualEventList').innerHTML = '<h2>Events you have added</h2>' +
+    $('#manualEventList').innerHTML = '<h2>Events added by hand</h2>' +
       '<p class="hint">Only these can be edited here. A scraped listing is rewritten by ' +
-      'the next scrape, so a correction to one would not survive the night.</p>' +
+      'the next scrape, so a correction to one would not survive the night.' +
+      (SUBMISSIONS.length ? ' <b>pending</b> rows were proposed through the show form and ' +
+        'are not on the calendar until you approve them.' : '') + '</p>' +
+      SUBMISSIONS.map((s) =>
+        (editing && editing.kind === 'submission' && editing.id === s.id)
+          ? submissionEditor(s) : submissionRow(s)).join('') +
       rows.map((ev) => {
         if (editing && editing.kind === 'event' && editing.id === ev.id) return eventEditor(ev);
         return '<div class="vrow">' +
           '<span class="vn">' + esc(ev.name) + '</span>' +
           '<span class="cm">' + esc(ev.date) + '</span>' +
           '<span class="cm">' + esc(ev.venue_name || '') + '</span>' +
+          (ev.submitted_by ? '<span class="cm">via ' + esc(ev.submitted_by) + '</span>' : '') +
           '<button onclick="startEditEvent(' + ev.id + ')">edit</button>' +
           '<button class="danger" onclick="deleteEvent(' + ev.id + ',' +
             JSON.stringify(esc(ev.name)) + ')">delete</button>' +
         '</div>';
       }).join('');
+  }
+
+  // --- Proposed shows (/new-shows-form) ---
+  //
+  // A submission is not an event until it is approved, so these rows carry their own
+  // actions: review (an inline editor, like the others above), approve and reject. The
+  // approve endpoint builds the venue and event through the same code as the form above,
+  // so nothing here re-checks what the server already will.
+
+  let VENUES = null;      // the last /admin/api/venues response, for the editor's picker
+  let SUBMISSIONS = [];   // pending submissions, as last loaded
+
+  function setPendingCount(n) {
+    $('#pendingTab').textContent = n ? ' · ' + n + ' pending' : '';
+    $('#pendingJump').classList.toggle('hidden', !n);
+    $('#pendingJump').innerHTML = !n ? '' :
+      n + ' proposed show' + (n === 1 ? ' is' : 's are') + ' waiting for review. ' +
+      '<a href="#manualEventList">jump to ' + (n === 1 ? 'it' : 'them') + ' ↓</a>';
+  }
+
+  // The tab label is visible from every view, so the count is fetched on load rather
+  // than only when the add tab is opened — otherwise nothing would say a show was waiting.
+  async function refreshPendingCount() {
+    try { setPendingCount((await api('/admin/api/submissions')).count); } catch (_) {}
+  }
+
+  function submissionVenueLabel(s) {
+    if (s.venue_id) return esc(s.venue_name || ('venue ' + s.venue_id));
+    if (s.new_venue_name) {
+      return 'new venue: ' + esc(s.new_venue_name) + (s.new_venue_city ? ' · ' + esc(s.new_venue_city) : '');
+    }
+    return '<span class="warn">no venue — review to choose one</span>';
+  }
+
+  function submissionRow(s) {
+    return '<div class="vrow pend">' +
+      '<span class="b pending">pending</span>' +
+      '<span class="vn">' + esc(s.name) + '</span>' +
+      '<span class="cm">' + esc(s.date) + '</span>' +
+      '<span class="cm">' + submissionVenueLabel(s) + '</span>' +
+      '<span class="cm">from ' + esc(s.submitted_by) + '</span>' +
+      '<button onclick="startEditSubmission(' + s.id + ')">review</button>' +
+      '<button class="ok" onclick="approveSubmission(' + s.id + ')">approve</button>' +
+      '<button class="danger" onclick="rejectSubmission(' + s.id + ')">reject</button>' +
+    '</div>';
+  }
+
+  function startEditSubmission(id) {
+    editing = { kind: 'submission', id: id };
+    loadManualLists();
+  }
+
+  // A field that can be hidden as part of the new-venue group.
+  function subField(id, label, value, type, cls) {
+    return '<div class="f' + (cls ? ' ' + cls : '') + '"><label for="' + id + '">' + label + '</label>' +
+      '<input id="' + id + '" type="' + (type || 'text') + '" value="' +
+      esc(value == null ? '' : String(value)) + '"></div>';
+  }
+
+  function submissionVenueOptions(s) {
+    const opt = (v) => '<option value="' + v.id + '"' + (v.id === s.venue_id ? ' selected' : '') +
+      '>' + esc(v.name) + ' · ' + esc(v.city) + '</option>';
+    // The proposed venue first and selected when that is what they sent, so the
+    // default action is "approve what was proposed" and remapping is a deliberate change.
+    let html = '<option value="' + NEW_VENUE + '"' + (s.venue_id ? '' : ' selected') + '>' +
+      (s.new_venue_name ? 'new venue, as proposed: ' + esc(s.new_venue_name) : '＋ new venue…') + '</option>';
+    if (VENUES && VENUES.manual.length) {
+      html += '<optgroup label="promoters and one-offs">' + VENUES.manual.map(opt).join('') + '</optgroup>';
+    }
+    if (VENUES) html += '<optgroup label="scraped venues">' + VENUES.scraped.map(opt).join('') + '</optgroup>';
+    return html;
+  }
+
+  function submissionEditor(s) {
+    const isNew = !s.venue_id;
+    const nv = 'snv' + (isNew ? '' : ' hidden');
+    return '<div class="vedit">' +
+      '<p class="hint">Proposed by <span class="who">' + esc(s.submitted_by) + '</span>' +
+        (s.submitted_at ? ' on ' + esc(s.submitted_at.slice(0, 10)) : '') + '.' +
+        (s.note ? ' Their note: <span class="who">' + esc(s.note) + '</span>' : '') + '</p>' +
+      '<div class="grid">' +
+        '<div class="f wide"><label for="sVenue">venue</label>' +
+          '<select id="sVenue" onchange="submissionVenueChanged()">' + submissionVenueOptions(s) + '</select>' +
+          '<span class="note">if the proposed venue is already listed under another name, ' +
+          'choose that one so approving doesn’t create a second copy</span></div>' +
+        subField('sNvName', 'new venue name', s.new_venue_name, 'text', nv) +
+        subField('sNvCity', 'new venue city', s.new_venue_city, 'text', nv) +
+        subField('sNvWebsite', 'new venue website', s.new_venue_website, 'url', nv) +
+        subField('sName', 'name', s.name) +
+        subField('sArtist', 'artist', s.artist) +
+        subField('sSupport', 'support', s.support_artists) +
+        subField('sDate', 'date', s.date, 'date') +
+        subField('sShow', 'show time', s.show_time, 'time') +
+        subField('sDoors', 'doors', s.doors_time, 'time') +
+        subField('sAge', 'ages', s.age_restriction) +
+        subField('sPriceMin', 'price from', s.price_min, 'number') +
+        subField('sPriceMax', 'price to', s.price_max, 'number') +
+        subField('sGenre', 'genre', s.genre) +
+        subField('sUrl', 'ticket link', s.ticket_url, 'url', 'wide') +
+        '<div class="f wide"><label for="sDesc">description</label>' +
+          '<textarea id="sDesc">' + esc(s.description || '') + '</textarea></div>' +
+        '<div class="f check wide"><input id="sLive" type="checkbox"' + (s.is_live_music ? ' checked' : '') + '>' +
+          '<label for="sLive">live music</label></div>' +
+      '</div>' +
+      '<div class="actions">' +
+        '<button class="go" onclick="saveSubmission(' + s.id + ', true)">save + approve</button>' +
+        '<button onclick="saveSubmission(' + s.id + ', false)">save</button>' +
+        '<button onclick="cancelEdit()">cancel</button>' +
+      '</div></div>';
+  }
+
+  function submissionVenueChanged() {
+    const isNew = $('#sVenue').value === NEW_VENUE;
+    document.querySelectorAll('.vedit .snv').forEach((el) => el.classList.toggle('hidden', !isNew));
+  }
+
+  function submissionBodyFromEditor(s) {
+    const isNew = $('#sVenue').value === NEW_VENUE;
+    const num = (id) => { const v = fieldValue(id); return v === null ? null : Number(v); };
+    return {
+      venue_id: isNew ? null : Number($('#sVenue').value),
+      new_venue_name: isNew ? fieldValue('#sNvName') : null,
+      new_venue_city: isNew ? fieldValue('#sNvCity') : null,
+      new_venue_website: isNew ? fieldValue('#sNvWebsite') : null,
+      name: fieldValue('#sName'),
+      date: fieldValue('#sDate'),
+      artist: fieldValue('#sArtist'),
+      support_artists: fieldValue('#sSupport'),
+      show_time: fieldValue('#sShow'),
+      doors_time: fieldValue('#sDoors'),
+      age_restriction: fieldValue('#sAge'),
+      price_min: num('#sPriceMin'),
+      price_max: num('#sPriceMax'),
+      genre: fieldValue('#sGenre'),
+      ticket_url: fieldValue('#sUrl'),
+      description: fieldValue('#sDesc'),
+      is_live_music: $('#sLive').checked,
+      // Not editable here — it is the submitter's message to the reviewer — but the edit
+      // replaces every field, so it has to be sent back as it was.
+      note: s.note,
+    };
+  }
+
+  // After anything that can create a venue or retire a submission: both lists, and the
+  // form's venue picker, which an approval may have just added to.
+  async function afterSubmissionChange() {
+    try {
+      await loadVenues($('#fVenue').value || null);
+      await loadManualLists();
+    } catch (e) {
+      showError(e);
+    }
+  }
+
+  async function approveRequest(id) {
+    const r = await api('/admin/api/submissions/' + id + '/approve', { method: 'POST' });
+    $('#ok').textContent = 'Approved "' + r.name + '" at ' + r.venue_name + ' on ' + r.date +
+                           '. It’s on the calendar now.';
+  }
+
+  async function saveSubmission(id, thenApprove) {
+    const s = SUBMISSIONS.find((x) => x.id === id);
+    if (!s) return;
+    $('#err').textContent = '';
+    $('#ok').textContent = '';
+    try {
+      await api('/admin/api/submissions/' + id, {
+        method: 'PUT', body: JSON.stringify(submissionBodyFromEditor(s)),
+      });
+      if (thenApprove) await approveRequest(id);
+      else $('#ok').textContent = 'Saved. It’s still waiting for approval.';
+      editing = null;
+    } catch (e) {
+      // The editor stays open on failure — a refused approval (already on the calendar,
+      // a venue name now taken) is exactly when the admin needs to change something.
+      showError(e);
+    }
+    await afterSubmissionChange();
+  }
+
+  async function approveSubmission(id) {
+    const s = SUBMISSIONS.find((x) => x.id === id);
+    if (!s) return;
+    let msg = 'Approve "' + s.name + '" on ' + s.date + '?\\n\\nIt goes on the public calendar straight away.';
+    if (!s.venue_id && s.new_venue_name) {
+      msg += '\\n\\nThis also creates the venue "' + s.new_venue_name + '"' +
+             (s.new_venue_city ? ' (' + s.new_venue_city + ')' : '') +
+             '. If it’s already listed under another name, use review to pick that one instead.';
+    }
+    if (!confirm(msg)) return;
+    $('#err').textContent = '';
+    $('#ok').textContent = '';
+    try {
+      await approveRequest(id);
+      if (editing && editing.kind === 'submission' && editing.id === id) editing = null;
+    } catch (e) {
+      showError(e);
+    }
+    await afterSubmissionChange();
+  }
+
+  async function rejectSubmission(id) {
+    const s = SUBMISSIONS.find((x) => x.id === id);
+    if (!s) return;
+    if (!confirm('Reject "' + s.name + '"?\\n\\nIt won’t go on the calendar, and ' +
+                 s.submitted_by + ' will see it marked rejected.')) return;
+    $('#err').textContent = '';
+    $('#ok').textContent = '';
+    try {
+      await api('/admin/api/submissions/' + id + '/reject', { method: 'POST' });
+      $('#ok').textContent = 'Rejected "' + s.name + '".';
+      if (editing && editing.kind === 'submission' && editing.id === id) editing = null;
+    } catch (e) {
+      showError(e);
+    }
+    await afterSubmissionChange();
   }
 
   function fieldValue(id) {
@@ -1194,6 +1445,7 @@ ADMIN_HTML = """<!doctype html>
       t = setTimeout(() => { state.search = e.target.value.trim(); load(); }, 300);
     });
     reload();
+    refreshPendingCount();
   });
 </script>
 </body></html>

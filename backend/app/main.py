@@ -28,7 +28,7 @@ from app.database import async_session
 from app.redaction import describe_exception, redact_handler
 from app.seed import seed_venues
 from app.scheduler import scheduler, configure_scheduler
-from app.api import events, venues, health, feeds, admin
+from app.api import events, venues, health, feeds, admin, submissions
 from app import tokens
 
 # --- Logging setup ---
@@ -305,6 +305,42 @@ async def enforce_admin_access(request: Request, call_next):
     request.state.access_email = tokens.access_identity(claims)
     return await call_next(request)
 
+
+# --- Origin enforcement on /new-shows-form ---
+
+@app.middleware("http")
+async def enforce_submit_access(request: Request, call_next):
+    """Require a valid Cloudflare Access token for the form's own application.
+
+    The same shape as the /admin gate above, against a different audience — a separate
+    Access application with its own policy. So the identity set here is stored under its
+    own name, never `access_email`: admin handlers trust that attribute as proof of an
+    admin, and it must only ever be set from an admin-audience token.
+
+    Inert when unconfigured, like the admin gate; what an unconfigured form then does is
+    the router's decision (app.api.submissions.require_submitter), which fails closed in
+    production because, unlike /admin, there is no password to fall back on.
+    """
+    if not submissions.is_submit_path(request.url.path):
+        return await call_next(request)
+
+    if not tokens.submit_access_configured():
+        return await call_next(request)
+
+    try:
+        claims = tokens.verify_cloudflare_submit_access(
+            request.headers.get("cf-access-jwt-assertion")
+        )
+    except tokens.TokenError as exc:
+        logger.info(f"[submit] rejected {request.method} {request.url.path}: {exc}")
+        return JSONResponse(
+            {"detail": "This surface is reachable only through Cloudflare Access."},
+            status_code=403,
+        )
+
+    request.state.submit_email = tokens.access_identity(claims)
+    return await call_next(request)
+
 # --- Route registration ---
 
 # API routes
@@ -315,6 +351,8 @@ app.include_router(feeds.router)
 # Admin subsite — must be registered before the "/" static mount below so its
 # routes take priority over the catch-all StaticFiles handler.
 app.include_router(admin.router)
+# Same reason: /new-shows-form must win over the static catch-all.
+app.include_router(submissions.router)
 
 # --- Origin enforcement on POST /api/scrape ---
 

@@ -26,10 +26,12 @@ from sqlalchemy.orm import joinedload
 
 from app.config import settings
 from app.database import get_session
-from app.models import Event, Venue, SeriesOverride, MANUAL_SCRAPER_TYPE
+from app.models import (
+    Event, Venue, SeriesOverride, ShowSubmission, SubmissionStatus, MANUAL_SCRAPER_TYPE,
+)
 from app.classifier import normalize_series_name, criteria_summary, reclassify_floor
 from app.duplicates import FoldError, build_clusters, validate_fold
-from app.scrapers.base import ScrapedEvent, clean_title
+from app.scrapers.base import ScrapedEvent, clean_title, _validate_absolute_http_url
 from app.scrapers.manager import ScrapeManager, event_from_scraped
 from app.venue_colors import is_valid_hex, pick_venue_color
 from app.admin_ui import LOGIN_HTML, ADMIN_HTML
@@ -349,6 +351,17 @@ async def admin_events(
     # resolved from the rows already loaded.
     survivor_names = await _survivor_names(session, [e.duplicate_of_id for e in events])
 
+    # Who proposed each hand-added event that arrived through /new-shows-form. Only asked
+    # for the hand-added list, the one place it is shown; elsewhere it would be a query
+    # per page load for a column nobody reads.
+    submitters: dict[int, str] = {}
+    if manual_only and events:
+        rows = await session.execute(
+            select(ShowSubmission.event_id, ShowSubmission.submitted_by)
+            .where(ShowSubmission.event_id.in_([e.id for e in events]))
+        )
+        submitters = {event_id: who for event_id, who in rows.all()}
+
     out = []
     for e in events:
         series_key = normalize_series_name(e.name)
@@ -381,6 +394,7 @@ async def admin_events(
             # The edit form on the add tab writes this back, so it has to be able to
             # read it first — without it, saving a hand-added event would blank the time.
             "show_time": e.show_time.strftime("%H:%M") if e.show_time else None,
+            "submitted_by": submitters.get(e.id),
             # Exposed so the dashboard can collapse a series into one row using the
             # same key a series override matches on — group and override stay in sync.
             "series_key": series_key,
@@ -866,6 +880,27 @@ async def create_manual_venue(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Create a venue nothing scrapes, so hand-added events have somewhere to hang."""
+    venue = await build_manual_venue(session, body)
+    await session.commit()
+    logger.info(f"[admin] created manual venue {venue.slug!r} ({venue.city}) with colour {venue.color}")
+    return {
+        "ok": True,
+        "id": venue.id,
+        "name": venue.name,
+        "city": venue.city,
+        "color": venue.color,
+        "upcoming_event_count": 0,
+    }
+
+
+async def build_manual_venue(session: AsyncSession, body: ManualVenueBody) -> Venue:
+    """Validate and add a manual venue to the session, flushed but not committed.
+
+    Shared by the admin's own add and by approving a submission that proposed a new
+    venue, so both get the same slug clash check and colour choice. Not committing is
+    what lets an approval create the venue and its event as one transaction: if the
+    event is then refused, nothing is left behind.
+    """
     name = (body.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="A name is required.")
@@ -914,16 +949,8 @@ async def create_manual_venue(
         color=color,
     )
     session.add(venue)
-    await session.commit()
-    logger.info(f"[admin] created manual venue {slug!r} ({city}) with colour {color}")
-    return {
-        "ok": True,
-        "id": venue.id,
-        "name": venue.name,
-        "city": venue.city,
-        "color": venue.color,
-        "upcoming_event_count": 0,
-    }
+    await session.flush()  # assigns venue.id, which the caller's event needs
+    return venue
 
 
 @router.patch("/api/venues/{venue_id}", dependencies=[Depends(require_admin)])
@@ -1021,13 +1048,37 @@ async def create_manual_event(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Create one event by hand, at an existing venue."""
-    name = (body.name or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="A name is required.")
-
     venue = await session.get(Venue, body.venue_id)
     if not venue:
         raise HTTPException(status_code=404, detail="That venue does not exist.")
+
+    event = await build_manual_event(session, venue, body)
+    await session.commit()
+
+    logger.info(
+        f"[admin] created manual event {event.id} {event.name!r} at {venue.slug} on {event.date}"
+    )
+    return {
+        "ok": True,
+        "id": event.id,
+        "name": event.name,
+        "date": event.date.isoformat(),
+        "venue_name": venue.name,
+    }
+
+
+async def build_manual_event(
+    session: AsyncSession, venue: Venue, body: ManualEventBody
+) -> Event:
+    """Validate and add a hand-made event at `venue` to the session, not committed.
+
+    Every rule a hand-added event is held to lives here, so that approving a submission
+    cannot take a shortcut past any of them. `body.venue_id` is ignored in favour of
+    `venue`, which may be one flushed moments ago in the same transaction.
+    """
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="A name is required.")
 
     try:
         on = date.fromisoformat((body.date or "")[:10])
@@ -1101,18 +1152,8 @@ async def create_manual_event(
     event.classification_reason = "manual"
     event.approved_at = datetime.utcnow()  # adding it by hand *is* the review
     session.add(event)
-    await session.commit()
-
-    logger.info(
-        f"[admin] created manual event {event.id} {name!r} at {venue.slug} on {on}"
-    )
-    return {
-        "ok": True,
-        "id": event.id,
-        "name": event.name,
-        "date": event.date.isoformat(),
-        "venue_name": venue.name,
-    }
+    await session.flush()  # assigns event.id
+    return event
 
 
 @router.patch("/api/events/{event_id}", dependencies=[Depends(require_admin)])
@@ -1406,3 +1447,347 @@ async def delete_series(
     await session.commit()
     await ScrapeManager(session).reclassify_all()
     return {"ok": True}
+
+
+# --- Show submissions (/new-shows-form) ---
+#
+# People on the form's Cloudflare Access policy propose shows; they wait in
+# show_submissions until an admin approves or rejects them. Approval is the only way a
+# submission reaches the calendar, and it goes through build_manual_venue and
+# build_manual_event — the admin's own hand-add — so a proposed show is held to exactly
+# the rules a hand-added one is, with nothing reimplemented for the submission path.
+#
+# The rules for what a submission may contain live here rather than in
+# app.api.submissions because two callers need them: the form, when someone submits, and
+# the admin's editor, when a pending submission is corrected before approval. The form
+# module imports from this one, never the reverse.
+
+# A generous ceiling on one person's queue. Access already limits who can submit; this
+# only stops a stuck submit button, or a script, from burying the admin list.
+MAX_PENDING_PER_SUBMITTER = 20
+
+# Column widths from ShowSubmission (Text columns get a sane cap), checked here so an
+# over-long field gets a sentence naming it rather than a database error.
+_SUBMISSION_LIMITS = {
+    "name": 500, "artist": 300, "support_artists": 2000, "ticket_url": 1000,
+    "description": 5000, "genre": 100, "age_restriction": 50, "note": 2000,
+    "new_venue_name": 200, "new_venue_city": 50, "new_venue_website": 500,
+}
+
+
+class SubmissionBody(BaseModel):
+    """A proposed show: an existing venue (venue_id) or a new one (new_venue_*).
+
+    The same body serves the form and the admin's edit, which replaces every field —
+    the editor shows them all, so there is no PATCH ambiguity to resolve.
+    """
+
+    venue_id: Optional[int] = None
+    new_venue_name: Optional[str] = None
+    new_venue_city: Optional[str] = None
+    new_venue_website: Optional[str] = None
+    name: str
+    date: str  # ISO
+    artist: Optional[str] = None
+    support_artists: Optional[str] = None
+    doors_time: Optional[str] = None  # HH:MM
+    show_time: Optional[str] = None
+    ticket_url: Optional[str] = None
+    price_min: Optional[float] = None
+    price_max: Optional[float] = None
+    description: Optional[str] = None
+    genre: Optional[str] = None
+    age_restriction: Optional[str] = None
+    is_live_music: bool = True
+    note: Optional[str] = None
+
+
+def _text(value: Optional[str]) -> Optional[str]:
+    value = (value or "").strip()
+    return value or None
+
+
+def _hhmm(value: Optional[time]) -> Optional[str]:
+    return value.strftime("%H:%M") if value else None
+
+
+def clean_submission(body: SubmissionBody, *, earliest: date) -> dict:
+    """Validate a submission's own fields and return them as ShowSubmission columns.
+
+    Venue existence and name clashes need the database, so they are checked separately
+    by resolve_submission_venue. `earliest` is today for a submitter — proposing a show
+    that already happened is a mistake — and the archive floor for an admin's edit.
+    """
+    values = {key: _text(getattr(body, key)) for key in _SUBMISSION_LIMITS}
+    for key, limit in _SUBMISSION_LIMITS.items():
+        if values[key] and len(values[key]) > limit:
+            label = key.replace("_", " ")
+            raise HTTPException(
+                status_code=400, detail=f"The {label} is too long (at most {limit} characters)."
+            )
+
+    if not values["name"]:
+        raise HTTPException(status_code=400, detail="A name is required.")
+
+    try:
+        on = date.fromisoformat((body.date or "")[:10])
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail=f"{body.date!r} is not a date like 2026-09-30."
+        )
+    latest = date(date.today().year + MANUAL_EVENT_MAX_YEARS_AHEAD, 12, 31)
+    if on < earliest:
+        raise HTTPException(status_code=400, detail=f"{on.isoformat()} has already passed.")
+    if on > latest:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{on.isoformat()} is further ahead than {latest.isoformat()}. Check the year.",
+        )
+
+    for price in (body.price_min, body.price_max):
+        if price is not None and price < 0:
+            raise HTTPException(status_code=400, detail="A price cannot be negative.")
+    if (
+        body.price_min is not None
+        and body.price_max is not None
+        and body.price_max < body.price_min
+    ):
+        raise HTTPException(status_code=400, detail="The highest price is below the lowest.")
+
+    # Refused rather than dropped. ScrapedEvent would quietly discard a bad link at
+    # approval, which for a scraper is right — one bad field must not lose the event — but
+    # a person typing into a form should hear that "www.example.com" needs its https://.
+    for key, label in (("ticket_url", "ticket link"), ("new_venue_website", "venue website")):
+        if values[key] and not _validate_absolute_http_url(values[key]):
+            raise HTTPException(
+                status_code=400,
+                detail=f"The {label} has to be a full address starting with https://.",
+            )
+
+    values.update(
+        date=on,
+        doors_time=_parse_time(body.doors_time, "doors_time"),
+        show_time=_parse_time(body.show_time, "show_time"),
+        price_min=body.price_min,
+        price_max=body.price_max,
+        is_live_music=bool(body.is_live_music),
+        venue_id=body.venue_id,
+    )
+    return values
+
+
+async def resolve_submission_venue(session: AsyncSession, values: dict) -> Optional[Venue]:
+    """Check the venue half of a cleaned submission, in place. Returns the existing venue.
+
+    An existing venue wins: when venue_id is given, any new-venue fields are cleared, so
+    a submission never carries two contradictory answers to "where is it". A proposed new
+    venue must have a name and a city, and must not be one that is already listed — the
+    form offers every venue, so a clash means the submitter missed it in the list, and
+    approving it as typed would create a second copy of a real room.
+    """
+    if values.get("venue_id") is not None:
+        venue = await session.get(Venue, values["venue_id"])
+        if not venue:
+            raise HTTPException(status_code=404, detail="That venue does not exist.")
+        values.update(new_venue_name=None, new_venue_city=None, new_venue_website=None)
+        return venue
+
+    if not values.get("new_venue_name"):
+        raise HTTPException(
+            status_code=400, detail="Choose a venue, or give the name of a new one."
+        )
+    if not values.get("new_venue_city"):
+        raise HTTPException(
+            status_code=400,
+            detail="A city is required for a new venue — the site groups and filters by it.",
+        )
+    slug = _slugify(values["new_venue_name"])
+    if not slug:
+        raise HTTPException(
+            status_code=400, detail="The venue name needs at least one letter or digit."
+        )
+    clash = (await session.execute(
+        select(Venue).where(
+            or_(Venue.slug == slug, func.lower(Venue.name) == values["new_venue_name"].lower())
+        )
+    )).scalars().first()
+    if clash:
+        raise HTTPException(
+            status_code=409,
+            detail=f'"{clash.name}" is already listed — choose it from the venue list.',
+        )
+    return None
+
+
+def submission_dict(s: ShowSubmission) -> dict:
+    """A submission as the admin list and editor read it."""
+    return {
+        "id": s.id,
+        "status": s.status,
+        "submitted_by": s.submitted_by,
+        "submitted_at": s.submitted_at.isoformat() if s.submitted_at else None,
+        "venue_id": s.venue_id,
+        "venue_name": s.venue.name if s.venue else None,
+        "venue_city": s.venue.city if s.venue else None,
+        "new_venue_name": s.new_venue_name,
+        "new_venue_city": s.new_venue_city,
+        "new_venue_website": s.new_venue_website,
+        "name": s.name,
+        "artist": s.artist,
+        "support_artists": s.support_artists,
+        "date": s.date.isoformat(),
+        "doors_time": _hhmm(s.doors_time),
+        "show_time": _hhmm(s.show_time),
+        "ticket_url": s.ticket_url,
+        "price_min": s.price_min,
+        "price_max": s.price_max,
+        "description": s.description,
+        "genre": s.genre,
+        "age_restriction": s.age_restriction,
+        "is_live_music": s.is_live_music,
+        "note": s.note,
+        "event_id": s.event_id,
+    }
+
+
+async def _pending_submission(session: AsyncSession, submission_id: int) -> ShowSubmission:
+    """Load a submission for a review action, locked, refusing one already reviewed.
+
+    The row lock is what stops two admins approving the same submission at once and
+    getting two events; the second waits, then sees it is no longer pending.
+    """
+    sub = await session.get(ShowSubmission, submission_id, with_for_update=True)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    if sub.status != SubmissionStatus.pending.value:
+        raise HTTPException(
+            status_code=409, detail=f"That submission has already been {sub.status}."
+        )
+    return sub
+
+
+@router.get("/api/submissions", dependencies=[Depends(require_admin)])
+async def list_submissions(session: AsyncSession = Depends(get_session)) -> dict:
+    """Pending submissions, oldest first — the order they have been waiting in.
+
+    Only pending ones. An approved submission is an ordinary hand-added event by then and
+    shows in that list, tagged with who proposed it; a rejected one needs nothing more.
+    """
+    rows = (await session.execute(
+        select(ShowSubmission)
+        .options(joinedload(ShowSubmission.venue))
+        .where(ShowSubmission.status == SubmissionStatus.pending.value)
+        .order_by(ShowSubmission.submitted_at, ShowSubmission.id)
+    )).unique().scalars().all()
+    return {"submissions": [submission_dict(s) for s in rows], "count": len(rows)}
+
+
+@router.put("/api/submissions/{submission_id}", dependencies=[Depends(require_admin)])
+async def edit_submission(
+    submission_id: int,
+    body: SubmissionBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Correct a pending submission before approving it, replacing every field.
+
+    The venue may be switched either way: to an existing venue — the usual fix, when
+    someone proposed a "new" venue that is already listed under a slightly different
+    name — or to a new one.
+    """
+    sub = await _pending_submission(session, submission_id)
+    values = clean_submission(body, earliest=MANUAL_EVENT_MIN_DATE)
+    await resolve_submission_venue(session, values)
+    for key, value in values.items():
+        setattr(sub, key, value)
+    await session.commit()
+    await session.refresh(sub, ["venue"])
+    logger.info(f"[admin] edited submission {submission_id} {sub.name!r}")
+    return {"ok": True, "submission": submission_dict(sub)}
+
+
+@router.post("/api/submissions/{submission_id}/approve")
+async def approve_submission(
+    submission_id: int,
+    who: str = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Publish a submission: create its venue if it proposed one, then its event.
+
+    One transaction. If the event is refused — the show is already on the calendar, the
+    date has slipped out of range — the venue created for it is rolled back too, and the
+    submission stays pending for the admin to fix and retry.
+    """
+    sub = await _pending_submission(session, submission_id)
+
+    if sub.venue_id is not None:
+        venue = await session.get(Venue, sub.venue_id)
+        if not venue:
+            raise HTTPException(
+                status_code=400,
+                detail="Its venue no longer exists. Edit the submission and choose another.",
+            )
+    elif sub.new_venue_name:
+        venue = await build_manual_venue(session, ManualVenueBody(
+            name=sub.new_venue_name,
+            city=sub.new_venue_city or "",
+            website=sub.new_venue_website,
+        ))
+    else:
+        raise HTTPException(
+            status_code=400, detail="It has no venue. Edit the submission and choose one."
+        )
+
+    event = await build_manual_event(session, venue, ManualEventBody(
+        venue_id=venue.id,
+        name=sub.name,
+        date=sub.date.isoformat(),
+        artist=sub.artist,
+        support_artists=sub.support_artists,
+        doors_time=_hhmm(sub.doors_time),
+        show_time=_hhmm(sub.show_time),
+        ticket_url=sub.ticket_url,
+        price_min=sub.price_min,
+        price_max=sub.price_max,
+        description=sub.description,
+        genre=sub.genre,
+        age_restriction=sub.age_restriction,
+        is_live_music=sub.is_live_music,
+    ))
+
+    # venue_id is filled in even for a proposed venue, so the record points at the venue
+    # it became; new_venue_* stay as the record of what was proposed.
+    sub.venue_id = venue.id
+    sub.event_id = event.id
+    sub.status = SubmissionStatus.approved.value
+    sub.reviewed_by = who
+    sub.reviewed_at = datetime.utcnow()
+    await session.commit()
+
+    logger.info(
+        f"[admin] {who} approved submission {submission_id} from {sub.submitted_by}: "
+        f"event {event.id} {event.name!r} at {venue.slug} on {event.date}"
+    )
+    return {
+        "ok": True,
+        "id": submission_id,
+        "event_id": event.id,
+        "name": event.name,
+        "date": event.date.isoformat(),
+        "venue_name": venue.name,
+    }
+
+
+@router.post("/api/submissions/{submission_id}/reject")
+async def reject_submission(
+    submission_id: int,
+    who: str = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Decline a submission. Kept, marked rejected, so its submitter can see the outcome."""
+    sub = await _pending_submission(session, submission_id)
+    sub.status = SubmissionStatus.rejected.value
+    sub.reviewed_by = who
+    sub.reviewed_at = datetime.utcnow()
+    await session.commit()
+    logger.info(f"[admin] {who} rejected submission {submission_id} from {sub.submitted_by}")
+    return {"ok": True, "id": submission_id}
