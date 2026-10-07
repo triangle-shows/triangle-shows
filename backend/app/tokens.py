@@ -1,9 +1,10 @@
 """
 Verification of signed tokens, so the Cloud Run origin can tell who a request came from.
 
-Role: Imported by main.py to guard two routes that must not be open on the origin —
-`/admin/*` (Cloudflare Access) and `POST /api/scrape` (Google OIDC, as sent by Cloud
-Scheduler). Pure verification: no database, no application state.
+Role: Imported by main.py to guard the routes that must not be open on the origin —
+`/admin/*` and `/new-shows-form/*` (Cloudflare Access, one application each) and
+`POST /api/scrape` (Google OIDC, as sent by Cloud Scheduler). Pure verification: no
+database, no application state.
 
 Why this exists. The Cloud Run service sets no `--ingress` restriction, so its `.run.app`
 hostnames answer the public internet directly, skipping Cloudflare and anything enforced
@@ -131,8 +132,41 @@ def cloudflare_access_configured() -> bool:
     return bool(settings.CF_ACCESS_TEAM_DOMAIN and settings.CF_ACCESS_AUD)
 
 
+def submit_access_configured() -> bool:
+    """True when the /new-shows-form Access gate can enforce.
+
+    Needs the team domain shared with /admin and the form's own AUD tag. Deliberately not
+    satisfied by CF_ACCESS_AUD: that is the *admin* application's audience, and accepting
+    it here would mean only admins could submit — while accepting the form's audience on
+    /admin would mean every submitter was an admin.
+    """
+    from app.config import settings
+
+    return bool(settings.CF_ACCESS_TEAM_DOMAIN and settings.CF_ACCESS_SUBMIT_AUD)
+
+
+def _cloudflare_team_domain() -> str:
+    from app.config import settings
+
+    team_domain = settings.CF_ACCESS_TEAM_DOMAIN.strip().rstrip("/")
+    # Accept the team domain with or without a scheme, since the dashboard shows it bare.
+    if "://" in team_domain:
+        team_domain = team_domain.split("://", 1)[1]
+    return team_domain
+
+
+def _verify_cloudflare(token: Optional[str], audience: str) -> dict[str, Any]:
+    team_domain = _cloudflare_team_domain()
+    return verify_token(
+        token,
+        jwks_url=f"https://{team_domain}/cdn-cgi/access/certs",
+        issuers=(f"https://{team_domain}",),
+        audience=audience.strip(),
+    )
+
+
 def verify_cloudflare_access(token: Optional[str]) -> dict[str, Any]:
-    """Verify a Cloudflare Access token and return its claims.
+    """Verify a Cloudflare Access token for the admin application and return its claims.
 
     Cloudflare mints this after the visitor signs in against the configured identity
     provider, and attaches it to every request it forwards as `Cf-Access-Jwt-Assertion`.
@@ -140,21 +174,23 @@ def verify_cloudflare_access(token: Optional[str]) -> dict[str, Any]:
 
     The audience is the Access application's AUD tag and is required: a Cloudflare team
     can host several applications, and without this check a token issued for any of them
-    would open the admin surface.
+    — the /new-shows-form application included — would open the admin surface.
     """
     from app.config import settings
 
-    team_domain = settings.CF_ACCESS_TEAM_DOMAIN.strip().rstrip("/")
-    # Accept the team domain with or without a scheme, since the dashboard shows it bare.
-    if "://" in team_domain:
-        team_domain = team_domain.split("://", 1)[1]
+    return _verify_cloudflare(token, settings.CF_ACCESS_AUD)
 
-    return verify_token(
-        token,
-        jwks_url=f"https://{team_domain}/cdn-cgi/access/certs",
-        issuers=(f"https://{team_domain}",),
-        audience=settings.CF_ACCESS_AUD.strip(),
-    )
+
+def verify_cloudflare_submit_access(token: Optional[str]) -> dict[str, Any]:
+    """Verify a Cloudflare Access token for the /new-shows-form application.
+
+    Same four checks as the admin gate, against the form's own audience, so an admin's
+    token does not open the form and — the direction that matters — a submitter's token
+    does not open the admin.
+    """
+    from app.config import settings
+
+    return _verify_cloudflare(token, settings.CF_ACCESS_SUBMIT_AUD)
 
 
 def access_identity(claims: dict[str, Any]) -> str:
@@ -246,6 +282,15 @@ def log_enforcement_state() -> None:
             "[tokens] /admin: Cloudflare Access NOT enforced (CF_ACCESS_TEAM_DOMAIN "
             "and CF_ACCESS_AUD are not both set). The origin hostname reaches /admin "
             "without passing Cloudflare."
+        )
+
+    if submit_access_configured():
+        logger.info("[tokens] /new-shows-form: Cloudflare Access enforced at the origin")
+    else:
+        logger.warning(
+            "[tokens] /new-shows-form: Cloudflare Access NOT enforced (CF_ACCESS_TEAM_DOMAIN "
+            "and CF_ACCESS_SUBMIT_AUD are not both set). In production the form refuses "
+            "every request until it is; elsewhere it is open."
         )
 
     if scrape_token_configured():

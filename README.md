@@ -45,6 +45,7 @@ Triangle Shows aggregates live music listings from 21+ venues across the Triangl
 - **Event details** — modal with doors/show time, price, description, and ticket link
 - **Favorites** — heart events and export them as a `.ics` file
 - **Hide shows** — hide events cluttering your view; restore them any time
+- **Show proposals** — trusted contributors can propose a show (at a listed venue or a new one) at `/new-shows-form`, behind Cloudflare Access; an admin reviews, corrects and approves it on `/admin` before it reaches the calendar
 - **Calendar subscription** — add `https://triangle-shows.net/feeds/events.ics` to Apple Calendar, Google Calendar, or Outlook for live updates
 - **Color palettes** — 5 themes (Amber, Phosphor, Midnight, Wisteria, Durham) with light/dark modes
 - **Durham site** — [durm-shows.net](https://durm-shows.net) shows only Durham venues with the Durham Bulls palette. `durm.triangle-shows.net` still works and serves the same thing

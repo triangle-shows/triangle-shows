@@ -104,6 +104,11 @@ steps:
       # with nothing else in place. The /admin gate needs a Cloudflare Access application
       # to exist first, or /admin becomes unreachable — which is safe (it fails closed)
       # but not useful.
+      #
+      # /new-shows-form needs CF_ACCESS_SUBMIT_AUD=<aud-tag> appended to the live line
+      # below: the AUD tag of its own Access application, separate from /admin's. Until
+      # it is set the form answers 403 to everyone in production — there is no password
+      # fallback, so that is the only safe default.
       # ENABLE_STARTUP_SCRAPE=false because the on-boot scrape cannot work reliably here.
       # It runs as a detached asyncio task, and this service has no CPU-throttling
       # override, so Cloud Run allocates CPU only while a request is in flight. The task

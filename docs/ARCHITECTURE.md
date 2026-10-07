@@ -205,6 +205,7 @@ commit is live. That's what [`tools/wait_for_deploy.py`](../tools/wait_for_deplo
 | `SCRAPE_OIDC_AUDIENCE` | `https://triangle-shows.net/api/scrape` | The audience configured on the scheduler job |
 | `CF_ACCESS_TEAM_DOMAIN` | the Cloudflare Zero Trust team domain | Gates `/admin/*` |
 | `CF_ACCESS_AUD` | the Access application's AUD tag | An identifier, not a credential — see Origin gates |
+| `CF_ACCESS_SUBMIT_AUD` | the `/new-shows-form` Access application's AUD tag | Gates `/new-shows-form/*`. Unset, the form answers 403 in production — see Origin gates |
 
 **No admin secrets exist, and none are needed.** `ADMIN_PASSWORD` and `SESSION_SECRET` are
 absent from Secret Manager and their `cloudbuild.yaml` lines are commented out deliberately:
@@ -234,16 +235,35 @@ matching public keys, so verification is local arithmetic against cached keys:
 
 | Route | Issuer | Header |
 |---|---|---|
-| `/admin/*` | Cloudflare Access | `Cf-Access-Jwt-Assertion` |
+| `/admin/*` | Cloudflare Access (admin application) | `Cf-Access-Jwt-Assertion` |
+| `/new-shows-form/*` | Cloudflare Access (form application) | `Cf-Access-Jwt-Assertion` |
 | `POST /api/scrape` | Google (Cloud Scheduler's OIDC token) | `Authorization: Bearer …` |
 
-Four checks on each: signature, expiry, audience, issuer. Both gates are inert until their env
+Four checks on each: signature, expiry, audience, issuer. Every gate is inert until its env
 vars are set, and `log_enforcement_state()` states on every boot which are live — a control that
 silently does nothing when misconfigured is worse than an absent one, because it reads as
 protection.
 
+**The show form is a second Access application, not a second path on the first.** People
+allowed to propose a show are a broader group than admins, so `/new-shows-form` has its own
+Access application and policy, and therefore its own AUD tag (`CF_ACCESS_SUBMIT_AUD`). The
+audience check is what keeps the two apart at the origin: a token Cloudflare minted for the
+form does not verify on `/admin`, and an admin's token does not verify on the form. Setting it
+up:
+
+1. In Zero Trust, add a self-hosted application covering `triangle-shows.net/new-shows-form`
+   (subpaths included), with a policy naming who may submit
+2. Copy its AUD tag into `CF_ACCESS_SUBMIT_AUD` on the deploy line in `cloudbuild.yaml`
+
+Unlike `/admin` there is no password to fall back on, so an *unconfigured* form fails closed
+in production — every request gets a 403 — and is open only outside production, for local
+dev. What a submitter sends waits in the `show_submissions` table, which no public read path
+touches, until an admin approves it on `/admin`.
+
 Verified in production: `GET https://<origin>/admin` and `POST https://<origin>/api/scrape` both
-return 403, while a signed-in request through Cloudflare reaches the app normally.
+return 403, while a signed-in request through Cloudflare reaches the app normally. (The
+`/new-shows-form` gate is newer than that check; verify it the same way once its Access
+application exists.)
 
 Restricting Cloud Run ingress is *not* an alternative here. `internal-and-cloud-load-balancing`
 admits only Google's load balancer, and Cloudflare is not one — it reaches the origin over the
