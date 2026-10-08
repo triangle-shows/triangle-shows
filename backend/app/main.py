@@ -29,7 +29,7 @@ from app.redaction import describe_exception, redact_handler
 from app.seed import seed_venues
 from app.scheduler import scheduler, configure_scheduler
 from app.api import events, venues, health, feeds, admin, submissions
-from app import tokens
+from app import notify, tokens
 
 # --- Logging setup ---
 
@@ -155,6 +155,7 @@ async def lifespan(app: FastAPI):
     # configured wrong (and therefore doing nothing) is visible in the boot logs rather
     # than mistaken for protection.
     tokens.log_enforcement_state()
+    notify.log_state()
 
     # Apply any pending Alembic migrations — creates tables on fresh DBs, updates schema on existing ones
     await asyncio.to_thread(_run_migrations)

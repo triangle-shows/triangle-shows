@@ -129,6 +129,16 @@ steps:
       # so leaving these commented is safe; the rest of the site is unaffected.
       # - --update-secrets=ADMIN_PASSWORD=triangle-shows-admin-password:latest
       # - --update-secrets=SESSION_SECRET=triangle-shows-session-secret:latest
+      # ntfy notifications for new show submissions (backend/app/notify.py). Uncomment
+      # only after creating the secret, or the deploy fails on a missing secret. The value
+      # is the full topic URL; on ntfy.sh the topic name is the only access control, so
+      # make it long and random:
+      #   echo -n "https://ntfy.sh/ts-submissions-$(openssl rand -hex 12)" | \
+      #     gcloud secrets create triangle-shows-ntfy-url --data-file=-
+      # Left commented, submissions are saved as normal and simply notify nobody.
+      # - --update-secrets=NTFY_URL=triangle-shows-ntfy-url:latest
+      # Only for a server or reserved topic that requires an access token:
+      # - --update-secrets=NTFY_TOKEN=triangle-shows-ntfy-token:latest
 
 images:
   - $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/api:$COMMIT_SHA

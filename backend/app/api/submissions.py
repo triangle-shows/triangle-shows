@@ -24,7 +24,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from app import tokens
+from app import notify, tokens
 from app.api.admin import (
     MAX_PENDING_PER_SUBMITTER,
     SubmissionBody,
@@ -228,4 +228,15 @@ async def create_submission(
         f"on {submission.date} at "
         f"{venue.slug if venue else 'new venue ' + repr(submission.new_venue_name)}"
     )
+
+    # After the commit, so a notification never announces a submission that was rolled
+    # back. notify.send swallows its own failures: the submission is saved either way.
+    await notify.send(notify.submission_message(
+        name=submission.name,
+        on=submission.date,
+        venue=venue.name if venue else submission.new_venue_name,
+        new_venue=venue is None,
+        city=submission.new_venue_city,
+        who=who,
+    ))
     return {"ok": True, "id": submission.id, "name": submission.name}
