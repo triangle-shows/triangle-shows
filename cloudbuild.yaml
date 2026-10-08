@@ -39,6 +39,19 @@
 #        --member="serviceAccount:$PROJECT_NUM@cloudbuild.gserviceaccount.com" \
 #        --role="roles/iam.serviceAccountUser"
 #
+#      Then let the Cloud Run *runtime* service account read each secret the deploy
+#      step mounts. This is a different account from Cloud Build's above: Cloud Build
+#      only deploys, while the running container is what reads the secrets. The deploy
+#      step sets no --service-account, so the runtime account is the default compute
+#      one. Granted per secret rather than project-wide, so it can read only these;
+#      that means every NEW secret mounted below needs its own line here, or the deploy
+#      fails with "permission denied on secret" (the live revision keeps serving).
+#      for SECRET in triangle-shows-db-url triangle-shows-tm-api-key triangle-shows-ntfy-url; do
+#        gcloud secrets add-iam-policy-binding $SECRET \
+#          --member="serviceAccount:$PROJECT_NUM-compute@developer.gserviceaccount.com" \
+#          --role="roles/secretmanager.secretAccessor"
+#      done
+#
 #   4. Create Cloud Scheduler job for periodic scrapes:
 #      gcloud scheduler jobs create http triangle-shows-scrape \
 #        --schedule="0 */6 * * *" \
@@ -144,8 +157,8 @@ steps:
       #
       # ntfy notifications for new show submissions (backend/app/notify.py): the full
       # topic URL. A secret because on ntfy.sh the topic name is the only access control.
-      # The deploy fails if the secret is missing or the runtime service account cannot
-      # read it (see step 2). Comment it out to stop notifications; submissions are
+      # The deploy fails if the secret is missing (step 2) or the runtime service account
+      # cannot read it (step 3). Comment it out to stop notifications; submissions are
       # saved as normal either way.
       - --update-secrets=NTFY_URL=triangle-shows-ntfy-url:latest
       # Only for a server or reserved topic that requires an access token:
