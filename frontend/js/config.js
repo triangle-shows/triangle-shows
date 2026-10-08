@@ -101,13 +101,48 @@ const PALETTES = {
       "--today-bg":     "rgba(191,106,40,0.06)",
     },
   },
+  // October only (see SEASONAL_PALETTES): pumpkin on purple-black, slime-green hearts.
+  halloween: {
+    label: "Halloween",
+    accent: "#ff7a1a",
+    vars: {
+      "--bg":           "#0d0812",
+      "--surface":      "#160d1c",
+      "--surface2":     "#1e1226",
+      "--border":       "#34203f",
+      "--text":         "#f0e6d8",
+      "--muted":        "#9a78b0",
+      "--dim":          "#4a2c5a",
+      "--accent":       "#ff7a1a",
+      "--accent-hover": "#ffa04d",
+      "--accent-bg":    "rgba(255,122,26,0.12)",
+      "--today-bg":     "rgba(255,122,26,0.06)",
+    },
+  },
 };
 
-function applyPalette(key) {
+// Seasonal palettes, keyed to the month they run (Date#getMonth, so October is 9).
+// In season, a seasonal palette is the default for anyone who hasn't picked one and its
+// swatch is offered; out of season the swatch is hidden and a saved choice of it falls
+// back to the default. The default is applied without being saved, so it lapses on its
+// own when the month ends rather than sticking to every visitor who never chose it.
+const SEASONAL_PALETTES = { halloween: 9 };
+
+function isPaletteInSeason(key, date = new Date()) {
+  return !(key in SEASONAL_PALETTES) || SEASONAL_PALETTES[key] === date.getMonth();
+}
+
+function seasonalDefaultPalette(date = new Date()) {
+  return Object.keys(SEASONAL_PALETTES).find((k) => SEASONAL_PALETTES[k] === date.getMonth()) || null;
+}
+
+// `persist: false` is for defaults the visitor didn't choose (the seasonal palette), so
+// they aren't remembered as a preference.
+function applyPalette(key, { persist = true } = {}) {
   if (!PALETTES[key]) return;
   // Drive palette entirely through CSS: html[data-palette="..."] selectors in styles.css
   document.documentElement.dataset.palette = key;
-  localStorage.setItem("triangle-shows-palette", key);
+  if (persist) localStorage.setItem("triangle-shows-palette", key);
   document.querySelectorAll(".palette-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.palette === key);
   });

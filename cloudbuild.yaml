@@ -104,6 +104,11 @@ steps:
       # with nothing else in place. The /admin gate needs a Cloudflare Access application
       # to exist first, or /admin becomes unreachable — which is safe (it fails closed)
       # but not useful.
+      #
+      # /new-shows-form needs CF_ACCESS_SUBMIT_AUD=<aud-tag> appended to the live line
+      # below: the AUD tag of its own Access application, separate from /admin's. Until
+      # it is set the form answers 403 to everyone in production — there is no password
+      # fallback, so that is the only safe default.
       # ENABLE_STARTUP_SCRAPE=false because the on-boot scrape cannot work reliably here.
       # It runs as a detached asyncio task, and this service has no CPU-throttling
       # override, so Cloud Run allocates CPU only while a request is in flight. The task
@@ -116,7 +121,7 @@ steps:
       #
       # The alternative is --no-cpu-throttling, which keeps CPU allocated on idle
       # instances and costs more for work the scheduler already does deterministically.
-      - --set-env-vars=APP_ENV=production,ENABLE_SCHEDULER=false,LOG_LEVEL=INFO,ENABLE_STARTUP_SCRAPE=false,SCRAPE_ALLOWED_SERVICE_ACCOUNTS=triangle-shows-scrape@triangle-shows.iam.gserviceaccount.com,SCRAPE_OIDC_AUDIENCE=https://triangle-shows.net/api/scrape,CF_ACCESS_TEAM_DOMAIN=ty-fi.cloudflareaccess.com,CF_ACCESS_AUD=2672446ca36104364662d122c152746305f880c1d9fb818c0b1ec6cb55c8f0c4
+      - --set-env-vars=APP_ENV=production,ENABLE_SCHEDULER=false,LOG_LEVEL=INFO,ENABLE_STARTUP_SCRAPE=false,SCRAPE_ALLOWED_SERVICE_ACCOUNTS=triangle-shows-scrape@triangle-shows.iam.gserviceaccount.com,SCRAPE_OIDC_AUDIENCE=https://triangle-shows.net/api/scrape,CF_ACCESS_TEAM_DOMAIN=ty-fi.cloudflareaccess.com,CF_ACCESS_AUD=2672446ca36104364662d122c152746305f880c1d9fb818c0b1ec6cb55c8f0c4,CF_ACCESS_SUBMIT_AUD=f71c04cc854200947a4d91f63cb7d2b8d18abe345df740f5db9b158d5817e1b7
       - --update-secrets=DATABASE_URL=triangle-shows-db-url:latest
       - --update-secrets=TICKETMASTER_API_KEY=triangle-shows-tm-api-key:latest
       # Admin subsite — uncomment BOTH lines only after creating the two secrets

@@ -195,7 +195,9 @@ class TestManualEventEndpointRules:
     def source(self) -> str:
         from app.api import admin
 
-        return inspect.getsource(admin.create_manual_event)
+        # The helper, not the endpoint: the rules live there so that approving a
+        # submission (app.api.admin.approve_submission) is held to every one of them too.
+        return inspect.getsource(admin.build_manual_event)
 
     def test_both_manual_flags_are_set(self, source):
         """They mean different things and both are needed. is_manually_created stops

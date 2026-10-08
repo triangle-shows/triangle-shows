@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     CF_ACCESS_TEAM_DOMAIN: str = ""  # e.g. "triangleshows.cloudflareaccess.com"
     CF_ACCESS_AUD: str = ""  # the Access application's AUD tag
 
+    # Cloudflare Access gate on /new-shows-form/*. A separate Access application from
+    # /admin, with its own policy and so its own AUD tag: people allowed to propose a show
+    # are not thereby allowed into the admin, and a token minted for one application does
+    # not verify against the other. Shares CF_ACCESS_TEAM_DOMAIN, since both applications
+    # live in the same Zero Trust team. Unlike /admin there is no password fallback, so in
+    # production the form refuses everyone until this is set (see app.api.submissions).
+    CF_ACCESS_SUBMIT_AUD: str = ""
+
     # Google OIDC gate on POST /api/scrape. Cloud Scheduler already sends the token.
     SCRAPE_ALLOWED_SERVICE_ACCOUNTS: str = ""  # comma-separated service-account emails
     SCRAPE_OIDC_AUDIENCE: str = ""  # optional; the audience configured on the scheduler job

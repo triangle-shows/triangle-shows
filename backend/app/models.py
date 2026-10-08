@@ -48,6 +48,13 @@ class ScrapeStatus(str, enum.Enum):
     failed = "failed"
 
 
+class SubmissionStatus(str, enum.Enum):
+    """Where a proposed show is in review. See ShowSubmission."""
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
 # --- Models ---
 
 class Venue(Base):
@@ -229,3 +236,69 @@ class SeriesOverride(Base):
     __table_args__ = (
         UniqueConstraint("venue_id", "normalized_name", name="uq_series_override_key"),
     )
+
+
+class ShowSubmission(Base):
+    """A show someone proposed through /new-shows-form, waiting for an admin.
+
+    A table of its own rather than Event rows with a "pending" marker, and that is the
+    point of it. Every public read path — the calendar feed, the iCal feed, the venue
+    list's counts, the duplicate queue, reclassify, reconcile — reads `events` and would
+    each have to remember to exclude a pending row; one that forgot would publish an
+    unreviewed show. A pending Event would also occupy the unique hash a scraper matches
+    on, so a venue listing the same show would quietly adopt the unreviewed row. Kept
+    here, a submission cannot reach the site by any path except approval, which builds
+    the Venue and Event through the same code an admin's own hand-add uses.
+
+    The proposed venue is either an existing one (venue_id) or fields for a new one
+    (new_venue_*), which approval creates as a manual venue. Neither is enforced by a
+    CHECK: venue_id is ON DELETE SET NULL, and a constraint requiring one or the other
+    would make deleting a venue fail on any pending submission that pointed at it. The
+    API validates instead, and the admin can repoint a submission whose venue vanished.
+
+    Rows are kept after review, approved or rejected, so a submitter can see what became
+    of what they sent, and so an approved event can say who proposed it.
+    """
+    __tablename__ = "show_submissions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(20), default=SubmissionStatus.pending.value, index=True)
+    # The Cloudflare Access identity that submitted it — an email for a person.
+    submitted_by: Mapped[str] = mapped_column(String(320), index=True)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    # --- Venue: an existing one, or a proposed new one ---
+    venue_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("venues.id", ondelete="SET NULL"), nullable=True
+    )
+    new_venue_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    new_venue_city: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    new_venue_website: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    # --- The proposed event; same shapes as the Event columns they become ---
+    name: Mapped[str] = mapped_column(String(500))
+    artist: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    support_artists: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    date: Mapped[date] = mapped_column(Date)
+    doors_time: Mapped[Optional[time]] = mapped_column(Time, nullable=True)
+    show_time: Mapped[Optional[time]] = mapped_column(Time, nullable=True)
+    ticket_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    price_min: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    price_max: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    genre: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    age_restriction: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    is_live_music: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Free text to the admin: where they heard about it, anything that does not fit a field.
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # --- Review ---
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(320), nullable=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # The event approval created. SET NULL so deleting that event later does not take
+    # the record of the submission with it.
+    event_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("events.id", ondelete="SET NULL"), nullable=True
+    )
+
+    venue: Mapped[Optional["Venue"]] = relationship()

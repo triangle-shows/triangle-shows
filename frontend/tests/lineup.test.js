@@ -375,3 +375,38 @@ test("todayKey is the local date, not the UTC one", () => {
   const localEvening = new Date(2027, 0, 1, 20, 0, 0);
   assert.equal(L.todayKey(localEvening), "2027-01-01");
 });
+
+// ── canCopyImage ────────────────────────────────────────────────────────────
+//
+// Firefox on Android has every clipboard API and says it supports image/png, but its
+// clipboard only holds text, so every copy fails. The button must not be offered there.
+
+function FakeItem() {}
+FakeItem.supports = (type) => type === "image/png";
+const clipboard = { write: async () => {} };
+const FIREFOX_ANDROID = "Mozilla/5.0 (Android 14; Mobile; rv:131.0) Gecko/131.0 Firefox/131.0";
+const FIREFOX_DESKTOP =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0";
+
+test("copy image is offered on desktop Firefox", () => {
+  assert.equal(L.canCopyImage({ userAgent: FIREFOX_DESKTOP, clipboard }, FakeItem), true);
+});
+
+test("copy image is not offered on Android, even when the APIs say yes", () => {
+  assert.equal(L.canCopyImage({ userAgent: FIREFOX_ANDROID, clipboard }, FakeItem), false);
+});
+
+test("copy image is not offered without ClipboardItem or clipboard.write", () => {
+  assert.equal(L.canCopyImage({ userAgent: FIREFOX_DESKTOP, clipboard }, undefined), false);
+  assert.equal(L.canCopyImage({ userAgent: FIREFOX_DESKTOP }, FakeItem), false);
+});
+
+test("copy image is not offered where PNG is unsupported", () => {
+  function NoPng() {}
+  NoPng.supports = () => false;
+  assert.equal(L.canCopyImage({ userAgent: FIREFOX_DESKTOP, clipboard }, NoPng), false);
+});
+
+test("no navigator at all means no copy button, not a crash", () => {
+  assert.equal(L.canCopyImage(undefined, FakeItem), false);
+});
