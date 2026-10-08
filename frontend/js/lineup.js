@@ -718,6 +718,17 @@
     return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
   }
 
+  /** The PNG as a data: URL, from the bytes already encoded rather than a second
+   *  toDataURL() pass over the canvas. */
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
   function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -739,7 +750,7 @@
     if (e.key === "Escape") closeLineup();
   }
 
-  function openPreview(canvas, blob, filename) {
+  function openPreview(canvas, blob, dataUrl, filename) {
     closeLineup();
 
     const overlay = document.createElement("div");
@@ -752,8 +763,23 @@
     const panel = document.createElement("div");
     panel.className = "lineup-panel";
 
-    canvas.className = "lineup-canvas";
-    panel.appendChild(canvas);
+    // The finished PNG as an <img>, not the canvas it was drawn on. It looks the same,
+    // but pressing and holding an image opens the browser's own image menu -- Share
+    // image, Save image -- and a canvas gets no such menu. On Firefox for Android, which
+    // can neither share a file from a page nor copy an image, that menu is the quickest
+    // way to get the poster into another app.
+    //
+    // A data: URL rather than a blob: one. That menu hands the image's address to the
+    // browser's own share and download code, outside the page; a blob: URL means
+    // nothing out there, while a data: URL carries the image with it. About a third
+    // larger as text, which for one poster costs nothing that matters.
+    const poster = document.createElement("img");
+    poster.src = dataUrl;
+    poster.width = canvas.width;
+    poster.height = canvas.height;
+    poster.alt = "Poster of your upcoming shows";
+    poster.className = "lineup-poster";
+    panel.appendChild(poster);
 
     const actions = document.createElement("div");
     actions.className = "lineup-actions";
@@ -782,9 +808,9 @@
       };
       actions.appendChild(share);
     } else if (canCopyImage()) {
-      // The fallback for browsers that can't share a file -- Firefox on desktop and
-      // Android, chiefly. A copied image pastes straight into a message or a post, which
-      // is most of what the share sheet would have been used for.
+      // The fallback for browsers that can't share a file -- Firefox on desktop, chiefly.
+      // A copied image pastes straight into a message or a post, which is most of what
+      // the share sheet would have been used for.
       const copy = document.createElement("button");
       copy.className = "lineup-btn";
       copy.textContent = "⧉ copy image";
@@ -798,6 +824,13 @@
         }
       };
       actions.appendChild(copy);
+    } else if (global.matchMedia && global.matchMedia("(pointer: coarse)").matches) {
+      // A phone with neither button -- Firefox for Android, chiefly. Without this the
+      // press-and-hold menu is there but nothing says so.
+      const hint = document.createElement("p");
+      hint.className = "lineup-hint";
+      hint.textContent = "Press and hold the poster to share it.";
+      panel.appendChild(hint);
     }
 
     const close = document.createElement("button");
@@ -815,12 +848,22 @@
   }
 
   /** Whether this browser can put a PNG on the clipboard. Needs the async Clipboard API
-   *  (secure contexts only) and ClipboardItem, which Firefox gained in version 127. */
-  function canCopyImage() {
+   *  (secure contexts only) and ClipboardItem, which Firefox gained in version 127.
+   *
+   *  Never on Android. Firefox there has every one of those APIs, and
+   *  ClipboardItem.supports("image/png") answers true, but it only checks the type
+   *  against a fixed list: the Android clipboard Firefox writes to holds text alone, so
+   *  every image copy is refused. Nothing short of trying reveals that, so the platform
+   *  is the only test there is. Chrome on Android is unaffected -- it can share the
+   *  file, so it is offered the share button and never reaches this fallback.
+   *
+   *  Takes its globals as arguments so the tests can pass stand-ins. */
+  function canCopyImage(nav = global.navigator, Item = global.ClipboardItem) {
+    if (!nav || /Android/i.test(nav.userAgent || "")) return false;
     return Boolean(
-      typeof ClipboardItem === "function" &&
-      navigator.clipboard && typeof navigator.clipboard.write === "function" &&
-      (typeof ClipboardItem.supports !== "function" || ClipboardItem.supports("image/png"))
+      typeof Item === "function" &&
+      nav.clipboard && typeof nav.clipboard.write === "function" &&
+      (typeof Item.supports !== "function" || Item.supports("image/png"))
     );
   }
 
@@ -860,7 +903,7 @@
       const canvas = renderPoster(events, readTheme(), readSite());
       const blob = await canvasToBlob(canvas);
       if (!blob) return;
-      openPreview(canvas, blob, posterFilename(today));
+      openPreview(canvas, blob, await blobToDataUrl(blob), posterFilename(today));
     } catch (err) {
       console.error("Could not build the lineup poster:", err);
     } finally {
@@ -887,6 +930,7 @@
     metaLine,
     posterFilename,
     todayKey,
+    canCopyImage,
     renderPoster,
     ensureAssets,
     drawPhotoRipple,
