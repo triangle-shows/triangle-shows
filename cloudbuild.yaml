@@ -12,11 +12,18 @@
 #      gcloud secrets create triangle-shows-tm-api-key \
 #        --data-file=- <<< "your_ticketmaster_api_key"
 #
-#      # Admin subsite (/admin) — REQUIRED before enabling the admin secrets in the
-#      # deploy step below, or the deploy will fail on a missing secret:
-#      gcloud secrets create triangle-shows-admin-password \
-#        --data-file=- <<< "a-strong-admin-password"
-#      openssl rand -base64 32 | gcloud secrets create triangle-shows-session-secret --data-file=-
+#      # ntfy topic for new-submission notifications (backend/app/notify.py). Required:
+#      # the deploy step below references it, and fails if it does not exist. On ntfy.sh
+#      # the topic name is the only access control, so make it long and random:
+#      echo -n "https://ntfy.sh/ts-submissions-$(openssl rand -hex 12)" | \
+#        gcloud secrets create triangle-shows-ntfy-url --data-file=-
+#
+#      # Admin password + session secret — NOT needed for this deployment. /admin
+#      # authenticates through Cloudflare Access (see the deploy step below). Create
+#      # these only for a self-hosted copy running without Cloudflare:
+#      #   gcloud secrets create triangle-shows-admin-password \
+#      #     --data-file=- <<< "a-strong-admin-password"
+#      #   openssl rand -base64 32 | gcloud secrets create triangle-shows-session-secret --data-file=-
 #
 #   3. Grant the Cloud Build service account permission to deploy to Cloud Run
 #      and access secrets (in IAM Console, or):
@@ -124,19 +131,23 @@ steps:
       - --set-env-vars=APP_ENV=production,ENABLE_SCHEDULER=false,LOG_LEVEL=INFO,ENABLE_STARTUP_SCRAPE=false,SCRAPE_ALLOWED_SERVICE_ACCOUNTS=triangle-shows-scrape@triangle-shows.iam.gserviceaccount.com,SCRAPE_OIDC_AUDIENCE=https://triangle-shows.net/api/scrape,CF_ACCESS_TEAM_DOMAIN=ty-fi.cloudflareaccess.com,CF_ACCESS_AUD=2672446ca36104364662d122c152746305f880c1d9fb818c0b1ec6cb55c8f0c4,CF_ACCESS_SUBMIT_AUD=f71c04cc854200947a4d91f63cb7d2b8d18abe345df740f5db9b158d5817e1b7
       - --update-secrets=DATABASE_URL=triangle-shows-db-url:latest
       - --update-secrets=TICKETMASTER_API_KEY=triangle-shows-tm-api-key:latest
-      # Admin subsite — uncomment BOTH lines only after creating the two secrets
-      # above (see step 2). Without them the /admin login is disabled (fails closed),
-      # so leaving these commented is safe; the rest of the site is unaffected.
+      #
+      # Admin password login — deliberately OFF here, and meant to stay off. /admin
+      # authenticates from the Cloudflare Access identity (CF_ACCESS_TEAM_DOMAIN and
+      # CF_ACCESS_AUD above): every request carries a token for a named person, so there
+      # is no shared password to distribute or rotate, and no session cookie to sign.
+      # Neither secret exists in Secret Manager, so uncommenting these would fail the
+      # deploy. They are kept only for a self-hosted copy running without Cloudflare,
+      # where the password is the sole way into /admin.
       # - --update-secrets=ADMIN_PASSWORD=triangle-shows-admin-password:latest
       # - --update-secrets=SESSION_SECRET=triangle-shows-session-secret:latest
-      # ntfy notifications for new show submissions (backend/app/notify.py). Uncomment
-      # only after creating the secret, or the deploy fails on a missing secret. The value
-      # is the full topic URL; on ntfy.sh the topic name is the only access control, so
-      # make it long and random:
-      #   echo -n "https://ntfy.sh/ts-submissions-$(openssl rand -hex 12)" | \
-      #     gcloud secrets create triangle-shows-ntfy-url --data-file=-
-      # Left commented, submissions are saved as normal and simply notify nobody.
-      # - --update-secrets=NTFY_URL=triangle-shows-ntfy-url:latest
+      #
+      # ntfy notifications for new show submissions (backend/app/notify.py): the full
+      # topic URL. A secret because on ntfy.sh the topic name is the only access control.
+      # The deploy fails if the secret is missing or the runtime service account cannot
+      # read it (see step 2). Comment it out to stop notifications; submissions are
+      # saved as normal either way.
+      - --update-secrets=NTFY_URL=triangle-shows-ntfy-url:latest
       # Only for a server or reserved topic that requires an access token:
       # - --update-secrets=NTFY_TOKEN=triangle-shows-ntfy-token:latest
 
