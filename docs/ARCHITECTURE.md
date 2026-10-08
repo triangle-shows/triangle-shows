@@ -206,6 +206,9 @@ commit is live. That's what [`tools/wait_for_deploy.py`](../tools/wait_for_deplo
 | `CF_ACCESS_TEAM_DOMAIN` | the Cloudflare Zero Trust team domain | Gates `/admin/*` |
 | `CF_ACCESS_AUD` | the Access application's AUD tag | An identifier, not a credential — see Origin gates |
 | `CF_ACCESS_SUBMIT_AUD` | the `/new-shows-form` Access application's AUD tag | Gates `/new-shows-form/*`. Unset, the form answers 403 in production — see Origin gates |
+| `NTFY_URL` | secret `triangle-shows-ntfy-url` | ntfy topic URL notified of each new show submission. A secret because on ntfy.sh the topic name is the only access control. Unset, nothing is sent — see `backend/app/notify.py` |
+| `NTFY_TOKEN` | optional secret `triangle-shows-ntfy-token` | Access token, only for a self-hosted server or reserved topic that requires one |
+| `PUBLIC_SITE_URL` | default `https://triangle-shows.net` | Where a notification's tap-through points. The request's own host is the `.run.app` origin, so it cannot be used |
 
 **No admin secrets exist, and none are needed.** `ADMIN_PASSWORD` and `SESSION_SECRET` are
 absent from Secret Manager and their `cloudbuild.yaml` lines are commented out deliberately:

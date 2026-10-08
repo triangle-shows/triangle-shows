@@ -61,6 +61,18 @@ class Settings(BaseSettings):
     # production the form refuses everyone until this is set (see app.api.submissions).
     CF_ACCESS_SUBMIT_AUD: str = ""
 
+    # --- Notifications for new show submissions (see app.notify) ---
+    # Off until NTFY_URL is set. The URL is the full topic URL, e.g.
+    # "https://ntfy.sh/ts-submissions-<random>", and on a public ntfy server the topic
+    # name is the only thing stopping anyone else reading or posting to it — so it is a
+    # secret, and belongs in Secret Manager with NTFY_TOKEN, which is optional: an access
+    # token for a server or reserved topic that requires one.
+    NTFY_URL: str = ""
+    NTFY_TOKEN: str = ""
+    # Where the notification's tap-through points. The request's own host cannot be used:
+    # the Cloudflare Worker rewrites it to the .run.app origin.
+    PUBLIC_SITE_URL: str = "https://triangle-shows.net"
+
     # Google OIDC gate on POST /api/scrape. Cloud Scheduler already sends the token.
     SCRAPE_ALLOWED_SERVICE_ACCOUNTS: str = ""  # comma-separated service-account emails
     SCRAPE_OIDC_AUDIENCE: str = ""  # optional; the audience configured on the scheduler job
