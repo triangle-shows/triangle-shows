@@ -151,6 +151,13 @@ class RHPEventsScraper(BaseScraper):
                 ".eventSupport, .support, .event-support, .opener, .supporting"
             )
             support = support_el.get_text(strip=True) if support_el else None
+            if not support:
+                # Some RHP themes (Cat's Cradle's, for one) carry the support line in
+                # the card's subheader instead. Read it only as a fallback: joining it to
+                # the selector list above would let it win whenever it comes first in
+                # the document, even on cards that have a dedicated support element.
+                sub_el = wrapper.select_one(".eventSubHeader")
+                support = (sub_el.get_text(strip=True) if sub_el else "") or None
 
             # --- Doors / Show time ---
             doors_time = None
