@@ -145,10 +145,7 @@ async function loadVenues(attempt = 0) {
   try {
     const resp = await fetch(`${API_BASE}/api/venues`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const allVenues = await resp.json();
-    venues = SITE_CONFIG.city
-      ? allVenues.filter((v) => v.city === SITE_CONFIG.city)
-      : allVenues;
+    venues = await resp.json();
     renderFilters();
   } catch (err) {
     console.error("Failed to load venues:", err);
@@ -328,11 +325,6 @@ function subscribeToVenues() {
 function _checkEventVisible(ev, venueMap) {
   const props = ev.extendedProps;
 
-  // On subdomain sites (e.g. durm.triangle-shows.net), only show events from
-  // the locked city. Non-locked-city venues have no sidebar checkbox, so they
-  // wouldn't be in venueMap and would otherwise pass through unchecked.
-  if (SITE_CONFIG.city && props.venue_city !== SITE_CONFIG.city) return false;
-
   const hearted = typeof isFavorited === "function" && isFavorited(ev.id);
 
   // Favourites-only view. Composes with the venue and search filters below rather than
@@ -466,6 +458,7 @@ function _applyAllFiltersNow() {
 //   • Only that city → click city  → restore all venues.
 //   • Mixed state    → click city  → enable all venues in that city.
 function toggleCity(city) {
+  if(!city) return;
   const allCheckboxes = [
     ...document.querySelectorAll(".venue-checkbox input[type=checkbox]"),
   ];
@@ -563,3 +556,5 @@ function toggleSidebar() {
 
 // Initialize
 loadVenues();
+//Initialize site for pre-selected city:
+toggleCity(SITE_CONFIG.city);
