@@ -8,6 +8,7 @@ Requires: Venue config must include an `account_id` (VenuePilot account integer 
           no API key needed — the GraphQL endpoint is public.
 """
 import logging
+import re
 from datetime import date, datetime, time
 from typing import Optional
 
@@ -41,6 +42,12 @@ query GetEvents($accountId: Int!, $startDate: String!) {
   }
 }
 """
+
+# Venues often start the free-text `support` field with a joiner ("w/ Daniel Ouimet",
+# "with Lamplight"). Match it only in lowercase, as venues write it, so a band name
+# such as "With Honor" survives; skip "w/o" and "w/out"; and require something after
+# it, so a bare "with" is not reduced to an empty string.
+_SUPPORT_JOINER = re.compile(r"^(?:w/(?!o(?:ut)?\b)|with\s)\s*(?=\S)")
 
 # --- Scraper Class ---
 
@@ -100,7 +107,7 @@ class VenuePilotScraper(BaseScraper):
             if show_time == doors_time:
                 doors_time = None
 
-            support = (item.get("support") or "").strip() or None
+            support = _SUPPORT_JOINER.sub("", (item.get("support") or "").strip()) or None
             image_url = item.get("highlightedImage") or None
             ticket_url = item.get("ticketsUrl") or None
 
